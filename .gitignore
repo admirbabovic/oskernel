@@ -57,3 +57,8 @@ dkms.conf
 # Image and binary build
 *.bin
 *.img
+
+# Directories
+.idea/
+build/
+help/
