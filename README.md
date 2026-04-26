@@ -68,3 +68,11 @@ qemu-system-i386 -drive format=raw,file=build/os.img
 > sudo dnf install make     # Fedora
 > xcode-select --install    # MacOS
 > ```
+Running QEMU with 128MB RAM and serial output in terminal
+```
+qemu-system-i386 -drive format=raw,file=build/os.img -m 128M -serial stdio
+```
+Running QEMU with no GUI window, terminal only
+```
+qemu-system-i386 -drive format=raw,file=build/os.img -nographic
+```
