@@ -50,8 +50,9 @@ $(BUILD_DIR)/kernel.bin: $(BUILD_DIR)/kernel.elf
 # STEP 4: CREATE DISK IMAGE  (boot.bin + kernel.bin → os.img)
 # =============================================================================
 $(BUILD_DIR)/os.img: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
-	cat $^ > $@
-	dd if=/dev/zero of=$@ bs=512 count=2880 conv=notrunc 2>/dev/null
+	dd if=/dev/zero of=$@ bs=512 count=2880 2>/dev/null
+	dd if=$(BUILD_DIR)/boot.bin of=$@ bs=512 count=1 conv=notrunc 2>/dev/null
+	dd if=$(BUILD_DIR)/kernel.bin of=$@ bs=512 seek=1 conv=notrunc 2>/dev/null
 	@echo "os.img created ✓"
 
 # =============================================================================
