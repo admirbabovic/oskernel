@@ -2,7 +2,7 @@
 Design and Implementation of a Bare-Metal Kernel with Bootloader and Direct VGA I/O
 
 ## Getting Started
-In order to succesfully install and use OS the following packages are required to be installed on your device.
+In order to successfully install and use OS the following packages are required to be installed on your device.
 1. Ubuntu/Debian
 ```
 sudo apt install make nasm g++ binutils qemu-system-x86
@@ -52,7 +52,7 @@ Build and run the OS via QEMU
 ```
 make run
 ```
-Alternative is to seperately build `os.img` using
+Alternative is to separately build `os.img` using
 ```
 make
 ```
