@@ -2,11 +2,11 @@ ASM      = nasm
 UNAME    := $(shell uname -s)
 
 ifeq ($(UNAME), Darwin)
-    CXX     = x86_64-elf-g++
+    CC      = x86_64-elf-gcc
     LD      = x86_64-elf-ld
     OBJCOPY = x86_64-elf-objcopy
 else
-    CXX     = g++
+    CC      = gcc
     LD      = ld
     OBJCOPY = objcopy
 endif
@@ -14,8 +14,7 @@ endif
 SRC_DIR   = src
 BUILD_DIR = build
 
-CXXFLAGS = -m32 -ffreestanding -fno-exceptions -fno-rtti \
-           -fno-stack-protector -nostdlib -O2
+CFLAGS = -m32 -ffreestanding -fno-stack-protector -nostdlib -O2
 
 # =============================================================================
 # DEFAULT TARGET
@@ -34,10 +33,10 @@ $(BUILD_DIR)/boot.bin: $(SRC_DIR)/boot.asm | $(BUILD_DIR)
 	@echo "boot.bin: $$(wc -c < $@) bytes ✓"
 
 # =============================================================================
-# STEP 2+3: COMPILE AND LINK KERNEL  (kernel.cpp → kernel.elf → kernel.bin)
+# STEP 2+3: COMPILE AND LINK KERNEL  (kernel.c → kernel.elf → kernel.bin)
 # =============================================================================
-$(BUILD_DIR)/kernel.o: $(SRC_DIR)/kernel.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+$(BUILD_DIR)/kernel.o: $(SRC_DIR)/kernel.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/kernel.elf: $(BUILD_DIR)/kernel.o $(SRC_DIR)/linker.ld
 	$(LD) -m elf_i386 -T $(SRC_DIR)/linker.ld -o $@ $<
