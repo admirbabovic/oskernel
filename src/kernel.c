@@ -45,6 +45,10 @@ static inline void outb(uint16_t port, uint8_t value) {
     __asm__ volatile ("outb %1, %0" : : "dN"(port), "a"(value));
 }
 
+static inline void outw(uint16_t port, uint16_t value) {
+    __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
 /* inb — read one byte from an x86 I/O port. */
 static inline uint8_t inb(uint16_t port) {
     uint8_t ret;
@@ -467,7 +471,7 @@ static const char kb_map_shift[128] = {
     'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P',
     '{', '}', '\n', 0,
     'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':',
-    '"', '~', 0, '|',
+    '"', '~', 0, '|', '\\',
     'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?',
     0, '*', 0, ' ',
 };
@@ -740,33 +744,34 @@ static void draw_banner(void) {
 
     /* -- Rows 3-7: logo text -- */
     const char *logo[] = {
-        "  888b     d888          .d88888b.   .d8888b.  ",
-        "  8888b   d8888         d88P\" \"Y88b d88P  Y88b ",
-        "  88888b.d88888         888     888 Y88b.      ",
-        "  888Y88888P888 888  888888     888  \"Y888b.   ",
-        "  888 Y888P 888 888  888888     888     \"Y88b. ",
-        "  888  Y8P  888 888  888888     888       \"888 ",
-        "  888   \"   888 Y88b 888Y88b. .d88P Y88b  d88P ",
-        "  888       888  \"Y88888 \"Y88888P\"   \"Y8888P\"  ",
+        "    /$$$$$$   /$$$$$$   ",
+        "   /$$__  $$ /$$__  $$  ",
+        "  | $$  | $$| $$  |__/  ",
+        "  | $$  | $$|  $$$$$$   ",
+        "  | $$  | $$ |____  $$  ",
+        "  | $$  | $$ /$$  | $$  ",
+        "  |  $$$$$$/|  $$$$$$/  ",
+        "   |______/  |______/   ",
     };
+
     uint8_t logo_attr = vga_attr(VGA_LIGHT_CYAN, VGA_BLUE);
     for (int i = 0; i < 8; i++) {
         const char *line = logo[i];
-        int col = 15;
+        int col = 27;
         for (int j = 0; line[j]; j++, col++)
             if (col < VGA_COLS)
                 vga_putchar_at(line[j], logo_attr, 3 + i, col);
     }
 
     /* -- Row 12: tagline -- */
-    const char *tag = "[ A hobby OS kernel — built from scratch ]";
+    const char *tag = "[ OS kernel built built in C for CS304 course project ]";
     uint8_t tag_attr = vga_attr(VGA_YELLOW, VGA_BLUE);
     int tag_col = (VGA_COLS - (int)k_strlen(tag)) / 2;
     for (int i = 0; tag[i]; i++)
         vga_putchar_at(tag[i], tag_attr, 12, tag_col + i);
 
     /* -- Row 14: version / arch line -- */
-    const char *ver = "MyOS v1.0  |  x86 32-bit Protected Mode  |  GCC Toolchain";
+    const char *ver = "OS v0.1  |  x86 32-bit Protected Mode  |  GCC Toolchain";
     uint8_t ver_attr = vga_attr(VGA_WHITE, VGA_BLUE);
     int ver_col = (VGA_COLS - (int)k_strlen(ver)) / 2;
     for (int i = 0; ver[i]; i++)
@@ -817,7 +822,7 @@ static int  cmd_len = 0;
 /* Print the prompt */
 static void shell_prompt(void) {
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    vga_puts("myos");
+    vga_puts("root");
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("@kernel");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
@@ -829,7 +834,7 @@ static void shell_prompt(void) {
 
 static void cmd_help(void) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("\nMyOS Built-in Commands\n");
+    vga_puts("\nBuilt-in Commands\n");
     vga_puts("----------------------\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
     vga_puts("  help    ");
@@ -860,6 +865,10 @@ static void cmd_help(void) {
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("- Restart the machine\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
+    vga_puts("  exit    ");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    vga_puts("- Shut down the machine\n");
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
     vga_puts("  halt    ");
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("- Halt the CPU\n\n");
@@ -867,7 +876,7 @@ static void cmd_help(void) {
 
 static void cmd_about(void) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("\n  MyOS — A Minimal x86 Kernel\n");
+    vga_puts("\n  OS — A Minimal x86 Kernel\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("  Written in C and x86 assembly.\n");
     vga_puts("  Architecture : IA-32 (32-bit protected mode)\n");
@@ -884,7 +893,7 @@ static void cmd_uptime(void) {
     k_itoa(secs, buf);
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("\n  Uptime: ");
-    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+    vga_set_color(VGA_GREEN, VGA_BLACK);
     vga_puts(buf);
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts(" seconds\n\n");
@@ -933,6 +942,25 @@ static void cmd_reboot(void) {
     __asm__ volatile ("hlt");
 }
 
+static void cmd_exit(void) {
+    vga_puts("\n  Shutting down...\n");
+
+    /* QEMU ACPI shutdown — works on QEMU >= 2.0 */
+    outw(0x604, 0x2000);
+
+    /* Fallback 1: try the older Bochs/QEMU debug exit port */
+    outw(0xB004, 0x2000);
+
+    /* Fallback 2: triple fault — load a null IDT and trigger an interrupt */
+    __asm__ volatile (
+        "lidt (0)\n"
+        "int $3\n"
+    );
+
+    /* Should never reach here */
+    __asm__ volatile ("hlt");
+}
+
 /*
  * shell_run — read a line from the keyboard, dispatch to a command handler.
  */
@@ -975,6 +1003,8 @@ static void shell_run(void) {
             cmd_color();
         } else if (k_strcmp(cmd_buf, "reboot") == 0) {
             cmd_reboot();
+        } else if (k_strcmp(cmd_buf, "exit") == 0) {
+            cmd_exit();
         } else if (k_strcmp(cmd_buf, "halt") == 0) {
             vga_puts("\n  CPU halted. Power off the machine.\n");
             __asm__ volatile ("cli; hlt");
@@ -1028,7 +1058,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     vga_clear();
 
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    vga_puts("MyOS kernel booted successfully.\n");
+    vga_puts("OS kernel booted successfully.\n\n");
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
     vga_puts("Type 'help' for a list of commands.\n\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
