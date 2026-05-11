@@ -795,7 +795,8 @@
       <!-- §0 Types -->
       <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§0 Type Definitions</div>
       <div class="prose">
-        <p>No <code>&lt;stdint.h&gt;</code> in freestanding mode — we define everything ourselves. On IA-32: <code>char</code>=8-bit, <code>short</code>=16-bit, <code>int</code>=32-bit, <code>long long</code>=64-bit.</p>
+        <p>No <code>&lt;stdint.h&gt;</code> in freestanding mode — we define everything ourselves.
+          <br>On IA-32: <code>char</code>=8-bit, <code>short</code>=16-bit, <code>int</code>=32-bit, <code>long long</code>=64-bit.</p>
       </div>
       <div class="code-block">
         <div class="code-header">
@@ -817,10 +818,13 @@
         x86 has a separate I/O address space accessed via <code>IN</code>/<code>OUT</code> instructions — not regular memory reads/writes. PIC, PIT, keyboard, VGA all live here.
       </div>
       <div class="explain-row">
-        <div class="explain-code">outb(port, value)
-inb(port) → value
-io_wait()</div>
-        <div class="explain-text"><strong>outb/inb</strong> use inline assembly with <code>volatile</code> to prevent compiler optimisation. The <code>"dN"</code> constraint uses DX register or immediate for port numbers. <strong>io_wait()</strong> writes to port <code>0x80</code> (POST diagnostic port) — a harmless ~1-4µs delay for slow hardware like the 8259A PIC.</div>
+        <div class="explain-code">
+          outb(port, value)<br>
+          inb(port) → value<br>
+          io_wait()</div>
+        <div class="explain-text">
+          <code>outb/inb</code> use inline assembly with <code>volatile</code> to prevent compiler optimisation. The <code>"dN"</code> constraint uses DX register or immediate for port numbers.<br>
+          <code>io_wait()</code> writes to port <code>0x80</code> (POST diagnostic port) — a harmless ~1-4µs delay for slow hardware like the 8259A PIC.</div>
       </div>
 
       <!-- §2 VGA -->
@@ -832,14 +836,19 @@ io_wait()</div>
         </div>
         <div class="feature-card">
           <h4>80×25 Grid</h4>
-          <p>16 foreground colors, 8 background colors. Attribute = <code>(bg &lt;&lt; 4) | fg</code>. Hardware cursor controlled via ports <code>0x3D4/0x3D5</code>.</p>
+          <p>16 foreground colors, 8 background colors.<br>
+            Attribute = <code>(bg &lt;&lt; 4) | fg</code>.<br>
+            Hardware cursor controlled via ports <code>0x3D4/0x3D5</code>.</p>
         </div>
       </div>
       <div class="explain-row">
-        <div class="explain-code">vga_scroll()
-vga_putchar(c)
-vga_update_cursor()</div>
-        <div class="explain-text"><strong>vga_scroll()</strong> uses memmove to shift rows 1–24 up by one row, then fills the last row with spaces. <strong>vga_putchar()</strong> handles <code>\n</code>, <code>\r</code>, <code>\b</code> and wraps columns/rows automatically.</div>
+        <div class="explain-code">
+          vga_scroll()<br>
+          vga_putchar(c)<br>
+          vga_update_cursor()</div>
+        <div class="explain-text">
+          <code>vga_scroll()</code> uses memmove to shift rows 1–24 up by one row, then fills the last row with spaces.<br>
+          <code>vga_putchar()</code> handles <code>\n</code>, <code>\r</code>, <code>\b</code> and wraps columns/rows automatically.</div>
       </div>
 
       <!-- §3 Strings -->
@@ -876,16 +885,19 @@ vga_update_cursor()</div>
       <!-- §6 ISR Stubs -->
       <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§6 ISR Stub Macros</div>
       <div class="explain-row">
-        <div class="explain-code">__attribute__((naked))
-STUB_ISR_NOERR(n):
-  cli; push $0; push $n
-  pusha
-  push %ds
-  → call isr_handler(regs)
-  ← pop %ds; popa
-  add $8, %esp
-  iret</div>
-        <div class="explain-text">A <strong>naked</strong> function has no compiler-generated prologue/epilogue — we control the stack entirely. We push a fake error code (0) so all exceptions have the same stack layout. We push <code>ESP</code> as the argument to <code>isr_handler</code> — it points to our <code>registers_t</code> on the stack. <strong>IRET</strong> restores EIP, CS, EFLAGS.</div>
+        <div class="explain-code">
+          __attribute__((naked))<br>
+          STUB_ISR_NOERR(n):<br>
+          cli;<br>
+          push $0;<br>
+          push $n<br>
+          pusha<br>
+          push %ds<br>
+          → call isr_handler(regs)<br>
+          ← pop %ds; popa<br>
+          add $8, %esp<br>
+          iret</div>
+        <div class="explain-text">A <strong>naked</strong> function has no compiler-generated prologue/epilogue — we control the stack entirely. We push a fake error code (0) so all exceptions have the same stack layout. We push <code>ESP</code> as the argument to <code>isr_handler</code> — it points to our <code>registers_t</code> on the stack. <code>IRET</code> restores EIP, CS, EFLAGS.</div>
       </div>
 
       <!-- §7 PIC -->
@@ -895,26 +907,29 @@ STUB_ISR_NOERR(n):
         The 8259A PIC's default IRQ0–IRQ7 map to vectors 0x08–0x0F — which <em>collide</em> with CPU exception vectors 8–15. We remap IRQs to vectors 0x20–0x2F (safe, above all 32 exceptions).
       </div>
       <div class="explain-row">
-        <div class="explain-code">Master PIC: IRQ0-7 → 0x20-0x27
-Slave  PIC: IRQ8-15 → 0x28-0x2F
+        <div class="explain-code">
+          Master PIC: IRQ0-7 → 0x20-0x27<br>
+          Slave  PIC: IRQ8-15 → 0x28-0x2F<br>
 
-ICW1: 0x11 (init, cascade)
-ICW2: offset vectors
-ICW3: cascade identity
-ICW4: 0x01 (8086 mode)</div>
+          ICW1: 0x11 (init, cascade)<br>
+          ICW2: offset vectors<br>
+          ICW3: cascade identity<br>
+          ICW4: 0x01 (8086 mode)</div>
         <div class="explain-text">The 8259A is initialized with four Initialization Command Words (ICW). After remapping: IRQ0=timer (vec 32), IRQ1=keyboard (vec 33), IRQ8–15 on slave. <strong>EOI (0x20)</strong> must be sent to the PIC after every IRQ handler or no further interrupts of that type will fire.</div>
       </div>
 
       <!-- §8 Timer -->
       <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§8 Timer (IRQ 0)</div>
       <div class="explain-row">
-        <div class="explain-code">volatile uint32_t timer_ticks = 0;
+        <div class="explain-code">
+          volatile uint32_t timer_ticks = 0;<br>
 
-irq_handler_timer() {
-    timer_ticks++;
-    pic_eoi(0);
-}</div>
-        <div class="explain-text"><code>volatile</code> is critical — this variable is modified in an ISR and read in normal code. Without it, the compiler may cache it in a register and never re-read from memory. The PIT fires IRQ0 at ~18.2 Hz by default. Dividing by 18 gives approximate seconds.</div>
+          irq_handler_timer() {<br>
+              timer_ticks++;<br>
+              pic_eoi(0);<br>
+          }</div>
+        <div class="explain-text">
+          <code>volatile</code> is critical — this variable is modified in an ISR and read in normal code. Without it, the compiler may cache it in a register and never re-read from memory. The PIT fires IRQ0 at ~18.2 Hz by default. Dividing by 18 gives approximate seconds.</div>
       </div>
 
       <!-- §9 Keyboard -->
@@ -930,11 +945,13 @@ irq_handler_timer() {
         </div>
       </div>
       <div class="explain-row">
-        <div class="explain-code">char kb_getchar() {
-    while (kb_head == kb_tail)
-        __asm__ volatile("hlt");
-}</div>
-        <div class="explain-text"><code>hlt</code> halts the CPU until the next interrupt. This is power-efficient — instead of a busy-spin consuming 100% CPU, we sleep until the keyboard ISR advances <code>kb_head</code>. Break codes (key-release) have bit 7 set (<code>0x80</code>) — we ignore these.</div>
+        <div class="explain-code">
+          char kb_getchar() {<br>
+              while (kb_head == kb_tail)<br>
+                  __asm__ volatile("hlt");<br>
+          }</div>
+        <div class="explain-text">
+          <code>hlt</code> halts the CPU until the next interrupt. This is power-efficient — instead of a busy-spin consuming 100% CPU, we sleep until the keyboard ISR advances <code>kb_head</code>. Break codes (key-release) have bit 7 set (<code>0x80</code>) — we ignore these.</div>
       </div>
 
       <!-- §14 Shell -->
@@ -1178,12 +1195,12 @@ irq_handler_timer() {
 
       <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Keyboard Improvements</div>
       <div class="explain-row">
-        <div class="explain-code">Extended scancodes:
-0xE0 prefix →
-next byte = ext key
+        <div class="explain-code">
+          Extended scancodes:<br>
+          0xE0 prefix → next byte = ext key<br>
 
-Caps Lock: toggle on
-make-code, track state</div>
+          Caps Lock: toggle on
+          make-code, track state</div>
         <div class="explain-text">Many keys (arrows, Home, End, Insert, Delete, F5–F12) send 2-byte sequences: <code>0xE0</code> followed by a second scancode. Detect <code>0xE0</code> in the ISR, set a flag, and use a separate extended-key table for the next scancode.</div>
       </div>
 
