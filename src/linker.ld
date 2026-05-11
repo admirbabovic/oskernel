@@ -4,6 +4,7 @@ SECTIONS {
     . = 0x10000;            /* load address: start at physical 0x10000 */
 
     .text : {               /* code section */
+        *(.text.boot)
         *(.text)            /* include .text from all object files */
     }
 

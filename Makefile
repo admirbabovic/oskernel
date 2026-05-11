@@ -14,7 +14,8 @@ endif
 SRC_DIR   = src
 BUILD_DIR = build
 
-CFLAGS = -m32 -ffreestanding -fno-stack-protector -nostdlib -O2
+CFLAGS = -m32 -ffreestanding -fno-stack-protector -nostdlib -O1 \
+    		-fno-omit-frame-pointer -Wall -Wextra -std=c11
 
 # =============================================================================
 # DEFAULT TARGET

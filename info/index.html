@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyOS — Complete Code Explanation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+<style>
+  :root[data-theme="dark"] {
+    --bg: #0d0f14;
+    --bg2: #12151c;
+    --bg3: #1a1e28;
+    --surface: #1e2330;
+    --surface2: #252a38;
+    --border: #2e3547;
+    --text: #c8d0e8;
+    --text-dim: #6b7899;
+    --text-bright: #e8edf8;
+    --accent: #5b8fff;
+    --accent2: #ff6b6b;
+    --accent3: #00d4aa;
+    --accent4: #ffd166;
+    --accent5: #c084fc;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --code-bg: #0a0c12;
+    --code-border: #1e2740;
+    --glow: rgba(91,143,255,0.12);
+    --scrollbar: #2e3547;
+  }
+  :root[data-theme="light"] {
+    --bg: #f0f2f7;
+    --bg2: #e8ebf4;
+    --bg3: #dde1ee;
+    --surface: #ffffff;
+    --surface2: #f5f7fc;
+    --border: #d0d5e8;
+    --text: #3a3f5c;
+    --text-dim: #8890b0;
+    --text-bright: #1a1e30;
+    --accent: #3b6ff0;
+    --accent2: #e8403a;
+    --accent3: #00a885;
+    --accent4: #d49a00;
+    --accent5: #9b4dca;
+    --green: #22c55e;
+    --orange: #ea7010;
+    --code-bg: #1a1e2e;
+    --code-border: #2e3550;
+    --glow: rgba(59,111,240,0.08);
+    --scrollbar: #c0c8e0;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Roboto', 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    transition: background 0.3s, color 0.3s;
+    min-height: 100vh;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+
+  /* ── HEADER ── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    padding: 0 1.5rem;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+    gap: 1rem;
+  }
+  .header-logo {
+    display: flex; align-items: center; gap: 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 1.1rem;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .header-logo span { color: var(--text-dim); font-weight: 300; font-size: 0.85rem; }
+  .header-right { display: flex; align-items: center; gap: 0.75rem; }
+
+  /* Theme toggle */
+  .theme-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', monospace;
+    transition: all 0.2s;
+    white-space: nowrap;
+    display: flex; align-items: center; gap: 0.4rem;
+  }
+  .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── HERO ── */
+  .hero {
+    background: linear-gradient(135deg, var(--bg) 0%, var(--bg3) 50%, var(--bg) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 4rem 1.5rem 3rem;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, var(--glow) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 99px; padding: 0.35rem 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem; color: var(--accent);
+    margin-bottom: 1.5rem;
+    animation: fadeUp 0.6s ease both;
+  }
+  .hero-badge::before { content: '●'; font-size: 0.6rem; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 800; line-height: 1.1;
+    color: var(--text-bright);
+    margin-bottom: 0.75rem;
+    animation: fadeUp 0.6s 0.1s ease both;
+  }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem; color: var(--text-dim);
+    max-width: 560px; margin: 0 auto 2rem;
+    animation: fadeUp 0.6s 0.2s ease both;
+  }
+  .hero-toc {
+    display: flex; flex-wrap: wrap; gap: 0.5rem;
+    justify-content: center; max-width: 700px; margin: 0 auto;
+    animation: fadeUp 0.6s 0.3s ease both;
+  }
+  .toc-pill {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.78rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .toc-pill:hover { border-color: var(--accent); color: var(--accent); background: var(--surface2); }
+  .toc-pill b { color: var(--accent4); }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:none} }
+
+  /* ── MAIN LAYOUT ── */
+  .layout {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 5rem;
+  }
+
+  /* ── SECTION CARDS ── */
+  .section-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 2.5rem;
+    overflow: hidden;
+    transition: border-color 0.3s;
+    animation: fadeUp 0.5s ease both;
+  }
+  .section-card:hover { border-color: var(--accent); }
+
+  .section-header {
+    padding: 1.25rem 1.75rem;
+    display: flex; align-items: center; gap: 1rem;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-letter {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 1rem;
+    flex-shrink: 0;
+  }
+  .section-title-wrap { flex: 1; }
+  .section-title {
+    font-size: 1.05rem; font-weight: 700;
+    color: var(--text-bright);
+    line-height: 1.2;
+  }
+  .section-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; color: var(--text-dim);
+    margin-top: 0.15rem;
+  }
+  .collapse-icon {
+    font-size: 0.75rem; color: var(--text-dim);
+    transition: transform 0.3s;
+    flex-shrink: 0;
+  }
+  .section-card.open .collapse-icon { transform: rotate(180deg); }
+
+  .section-body {
+    padding: 1.75rem;
+    display: none;
+  }
+  .section-card.open .section-body { display: block; }
+
+  /* Paragraph prose */
+  .prose p { margin-bottom: 1rem; font-size: 0.95rem; color: var(--text); }
+  .prose p:last-child { margin-bottom: 0; }
+  .prose ul { list-style: none; margin-bottom: 1rem; }
+  .prose li {
+    padding: 0.25rem 0 0.25rem 1.4rem;
+    font-size: 0.92rem;
+    position: relative;
+  }
+  .prose li::before { content: '›'; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+
+  /* ── CODE BLOCKS ── */
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 10px;
+    margin: 1.25rem 0;
+    overflow: hidden;
+  }
+  .code-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.5rem 1rem;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--code-border);
+  }
+  .code-lang {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .code-dots { display: flex; gap: 0.35rem; }
+  .code-dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+  .code-dots span:nth-child(1) { background: #ff5f57; }
+  .code-dots span:nth-child(2) { background: #febc2e; }
+  .code-dots span:nth-child(3) { background: #28c840; }
+  pre {
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.7;
+    color: #c8d4f0;
+  }
+  .kw  { color: #ff79c6; }
+  .str { color: #f1fa8c; }
+  .num { color: #bd93f9; }
+  .cmt { color: #6272a4; font-style: italic; }
+  .fn  { color: #50fa7b; }
+  .reg { color: #ffb86c; }
+  .hex { color: #8be9fd; }
+
+  /* ── EXPLANATION ROWS ── */
+  .explain-row {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) minmax(0,1.4fr);
+    gap: 1rem;
+    margin: 1rem 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .explain-code {
+    background: var(--code-bg);
+    padding: 0.85rem 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    color: #ffb86c;
+    line-height: 1.65;
+    border-right: 1px solid var(--border);
+  }
+  .explain-text {
+    padding: 0.85rem 1rem;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--surface2);
+    line-height: 1.6;
+  }
+  @media (max-width: 600px) {
+    .explain-row { grid-template-columns: 1fr; }
+    .explain-code { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+
+  /* ── INFO BOXES ── */
+  .info-box {
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+    border-left: 3px solid;
+    font-size: 0.88rem;
+    line-height: 1.65;
+  }
+  .info-box.note { background: rgba(91,143,255,0.08); border-color: var(--accent); }
+  .info-box.warn { background: rgba(255,107,107,0.08); border-color: var(--accent2); }
+  .info-box.tip  { background: rgba(0,212,170,0.08); border-color: var(--accent3); }
+  .info-box.key  { background: rgba(255,209,102,0.08); border-color: var(--accent4); }
+  .info-box-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 0.4rem;
+  }
+  .info-box.note .info-box-label { color: var(--accent); }
+  .info-box.warn .info-box-label { color: var(--accent2); }
+  .info-box.tip  .info-box-label { color: var(--accent3); }
+  .info-box.key  .info-box-label { color: var(--accent4); }
+
+  /* ── MEMORY MAP TABLE ── */
+  .mem-map {
+    width: 100%; border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    margin: 1.25rem 0;
+    overflow: hidden;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  .mem-map th {
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-weight: 600;
+    padding: 0.6rem 1rem;
+    text-align: left;
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+  }
+  .mem-map td {
+    padding: 0.55rem 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--text);
+  }
+  .mem-map tr:hover td { background: var(--surface2); }
+  .addr { color: var(--hex); }
+  .mem-map .us td { background: rgba(91,143,255,0.07); }
+  .mem-map .us td .addr { color: var(--accent); }
+
+  /* ── SUBSECTION LABEL ── */
+  .sub-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 700;
+    padding: 0.25rem 0.75rem;
+    border-radius: 5px;
+    display: inline-block;
+    margin: 1.5rem 0 0.75rem;
+  }
+
+  /* ── ROADMAP ITEMS ── */
+  .roadmap-tier { margin-bottom: 1.5rem; }
+  .tier-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    padding: 0.2rem 0.7rem;
+    border-radius: 5px;
+    display: inline-block;
+    margin-bottom: 0.75rem;
+  }
+  .tier-beginner .tier-label { background: rgba(0,212,170,0.15); color: var(--accent3); }
+  .tier-intermediate .tier-label { background: rgba(255,209,102,0.15); color: var(--accent4); }
+  .tier-advanced .tier-label { background: rgba(255,107,107,0.15); color: var(--accent2); }
+  .roadmap-item {
+    display: flex; gap: 0.75rem; align-items: flex-start;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 0.88rem;
+  }
+  .roadmap-item:last-child { border-bottom: none; }
+  .roadmap-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    min-width: 28px; text-align: right;
+    color: var(--text-dim);
+    padding-top: 0.15rem;
+  }
+  .roadmap-text { flex: 1; }
+  .roadmap-text strong { color: var(--text-bright); }
+  .roadmap-text span { color: var(--text-dim); font-size: 0.82rem; }
+
+  /* ── SECTION COLOR VARIANTS ── */
+  .ltr-A .section-letter { background: rgba(91,143,255,0.15); color: var(--accent); }
+  .ltr-B .section-letter { background: rgba(255,107,107,0.15); color: var(--accent2); }
+  .ltr-C .section-letter { background: rgba(0,212,170,0.15); color: var(--accent3); }
+  .ltr-D .section-letter { background: rgba(255,209,102,0.15); color: var(--accent4); }
+  .ltr-E .section-letter { background: rgba(192,132,252,0.15); color: var(--accent5); }
+  .ltr-F .section-letter { background: rgba(74,222,128,0.15); color: var(--green); }
+  .ltr-G .section-letter { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .ltr-H .section-letter { background: rgba(91,143,255,0.15); color: var(--accent); }
+  .ltr-I .section-letter { background: rgba(255,107,107,0.15); color: var(--accent2); }
+  .ltr-J .section-letter { background: rgba(0,212,170,0.15); color: var(--accent3); }
+  .ltr-K .section-letter { background: rgba(255,209,102,0.15); color: var(--accent4); }
+
+  .ltr-A .section-header:hover { background: rgba(91,143,255,0.04); }
+  .ltr-B .section-header:hover { background: rgba(255,107,107,0.04); }
+  .ltr-C .section-header:hover { background: rgba(0,212,170,0.04); }
+  .ltr-D .section-header:hover { background: rgba(255,209,102,0.04); }
+  .ltr-E .section-header:hover { background: rgba(192,132,252,0.04); }
+  .ltr-F .section-header:hover { background: rgba(74,222,128,0.04); }
+  .ltr-G .section-header:hover { background: rgba(251,146,60,0.04); }
+  .ltr-H .section-header:hover { background: rgba(91,143,255,0.04); }
+  .ltr-I .section-header:hover { background: rgba(255,107,107,0.04); }
+  .ltr-J .section-header:hover { background: rgba(0,212,170,0.04); }
+  .ltr-K .section-header:hover { background: rgba(255,209,102,0.04); }
+
+  /* ── INLINE CODE ── */
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 4px;
+    padding: 0.1em 0.4em;
+    color: var(--accent3);
+  }
+
+  /* ── EXPAND ALL BUTTON ── */
+  .expand-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 0.5rem 1.1rem;
+    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', monospace;
+    transition: all 0.2s;
+    margin-bottom: 1.5rem;
+  }
+  .expand-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── STEP LIST ── */
+  .step-list { counter-reset: step; list-style: none; }
+  .step-list li {
+    counter-increment: step;
+    padding: 0.7rem 0 0.7rem 3rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+    position: relative;
+  }
+  .step-list li:last-child { border-bottom: none; }
+  .step-list li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 0.7rem;
+    width: 28px; height: 28px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; font-weight: 700;
+    color: var(--accent4);
+  }
+
+  /* ── TWO COLUMN GRID ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  @media (max-width: 560px) { .two-col { grid-template-columns: 1fr; } }
+  .feature-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+  }
+  .feature-card h4 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem; font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 0.4rem;
+  }
+  .feature-card p { font-size: 0.83rem; color: var(--text-dim); margin: 0; }
+
+  /* ── FOOTER ── */
+  footer {
+    text-align: center;
+    padding: 2rem;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+  footer span { color: var(--accent); }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 640px) {
+    .hero { padding: 2.5rem 1rem 2rem; }
+    .layout { padding: 1.5rem 1rem 4rem; }
+    .section-body { padding: 1.2rem; }
+    .section-header { padding: 1rem 1.2rem; }
+    pre { font-size: 0.72rem; }
+    .mem-map { font-size: 0.7rem; }
+    .header-logo span { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="header-logo">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <rect x="2" y="2" width="18" height="18" rx="4" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M6 8l4 3-4 3M12 14h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    MyOS
+    <span>/ kernel docs</span>
+  </div>
+  <div class="header-right">
+    <button class="expand-btn" id="expandAll" onclick="toggleAll()">⊞ Expand All</button>
+    <button class="theme-btn" onclick="toggleTheme()">
+      <span id="themeIcon">☀</span>
+      <span id="themeLabel">Light</span>
+    </button>
+  </div>
+</header>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <div class="hero-badge">Complete Line-by-Line Explanation</div>
+  <h1>MyOS — <em>How It Works</em></h1>
+  <p class="hero-sub">// Every file. Every line. Every concept. From power button to shell prompt.</p>
+  <div class="hero-toc">
+    <a href="#sec-a" class="toc-pill"><b>A</b> PC Boot Process</a>
+    <a href="#sec-b" class="toc-pill"><b>B</b> boot.asm</a>
+    <a href="#sec-c" class="toc-pill"><b>C</b> linker.ld</a>
+    <a href="#sec-d" class="toc-pill"><b>D</b> kernel.c</a>
+    <a href="#sec-e" class="toc-pill"><b>E</b> Makefile</a>
+    <a href="#sec-f" class="toc-pill"><b>F</b> Roadmap</a>
+    <a href="#sec-g" class="toc-pill"><b>G</b> Graphics/VBE</a>
+    <a href="#sec-h" class="toc-pill"><b>H</b> Shell</a>
+    <a href="#sec-i" class="toc-pill"><b>I</b> PS/2 Driver</a>
+    <a href="#sec-j" class="toc-pill"><b>J</b> Filesystem</a>
+    <a href="#sec-k" class="toc-pill"><b>K</b> QEMU</a>
+  </div>
+</div>
+
+<!-- ── MAIN CONTENT ── -->
+<div class="layout">
+
+  <!-- ════════════════ A. PC BOOT ════════════════ -->
+  <div class="section-card ltr-A open" id="sec-a">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">A</div>
+      <div class="section-title-wrap">
+        <div class="section-title">How a PC Boots — Essential Background</div>
+        <div class="section-meta">Required reading before everything else</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+      <p class="prose" style="color:var(--text)">When you press the power button on an x86 PC, a precise sequence of events unfolds before your OS kernel ever runs a single instruction.</p>
+
+      <ol class="step-list">
+        <li>The CPU resets and starts executing at physical address <code>0xFFFFFFF0</code> — the very top of 32-bit address space — where the BIOS ROM is mapped.</li>
+        <li>The <strong>BIOS</strong> runs its <strong>POST</strong> (Power-On Self-Test): checks RAM, discovers hardware, and sets up the Interrupt Vector Table (IVT) at address <code>0x0000</code>.</li>
+        <li>The BIOS finds a bootable disk, reads the first 512-byte sector (the <strong>MBR</strong>) into address <code>0x7C00</code>, checks for the boot signature <code>0x55 0xAA</code>, and jumps to <code>0x7C00</code>.</li>
+        <li>The CPU is in <strong>REAL MODE</strong> (16-bit). Only the first 1 MB of RAM is accessible and BIOS interrupts are available.</li>
+        <li>Our <code>boot.asm</code> runs from <code>0x7C00</code>. It loads the kernel, switches to <strong>PROTECTED MODE</strong> (32-bit), and jumps to the kernel at <code>0x10000</code>.</li>
+        <li>Our <code>kernel_main()</code> takes over. The BIOS is gone. The kernel manages everything itself.</li>
+      </ol>
+
+      <div class="info-box key">
+        <div class="info-box-label">Key Memory Map at Boot Time</div>
+        <table class="mem-map">
+          <thead><tr><th>Address Range</th><th>Contents</th></tr></thead>
+          <tbody>
+            <tr><td class="addr">0x0000 – 0x03FF</td><td>Real-mode IVT (Interrupt Vector Table)</td></tr>
+            <tr><td class="addr">0x0400 – 0x04FF</td><td>BIOS Data Area</td></tr>
+            <tr class="us"><td class="addr">0x7C00 – 0x7DFF</td><td>Bootloader (512 bytes — <strong>us!</strong>)</td></tr>
+            <tr class="us"><td class="addr">0x10000 →</td><td>Kernel code (<strong>us, loaded by bootloader</strong>)</td></tr>
+            <tr><td class="addr">0xA0000 – 0xBFFFF</td><td>Video memory (VGA)</td></tr>
+            <tr><td class="addr">0xB8000 →</td><td>VGA text-mode framebuffer</td></tr>
+            <tr><td class="addr">0xC0000 – 0xFFFFF</td><td>BIOS ROMs</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ B. BOOT.ASM ════════════════ -->
+  <div class="section-card ltr-B" id="sec-b">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">B</div>
+      <div class="section-title-wrap">
+        <div class="section-title">boot.asm — Line by Line</div>
+        <div class="section-meta">16-bit bootloader · real mode → protected mode transition</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="info-box note">
+        <div class="info-box-label">Overview</div>
+        The bootloader is exactly 512 bytes. It runs in 16-bit real mode, loads the kernel from disk, sets up the GDT, and switches the CPU into 32-bit protected mode.
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Initialization</div>
+      <div class="explain-row">
+        <div class="explain-code">
+          [BITS 16]
+          <br>
+          [ORG 0x7C00]</div>
+        <div class="explain-text">
+          <code>BITS 16</code> tells NASM to emit 16-bit machine code (CPU starts in real mode). <br>
+          <code>ORG 0x7C00</code> tells NASM the code loads at physical address 0x7C00, making all label addresses correct relative to that base.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">
+          cli<br>
+          xor ax, ax<br>
+          mov ds, ax<br>
+          mov es, ax<br>
+          mov ss, ax</div>
+        <div class="explain-text">
+          <code>cli</code> disables maskable interrupts while we set up the stack.
+          <code>xor ax, ax</code> sets AX=0. Setting <code>DS</code>, <code>ES</code>, <code>SS</code> all to 0 gives us a flat memory model where effective addresses equal their offsets — no segment aliasing bugs.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">
+          mov sp, 0x7C00<br>
+          sti</div>
+        <div class="explain-text">
+          Stack pointer at <code>0x7C00</code> — the stack grows <em>downward</em>, so the first PUSH writes to <code>0x7BFE</code>, safely below the bootloader.
+          <code>sti</code> re-enables interrupts once the stack is valid.</div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Disk Read (BIOS INT 0x13)</div>
+      <div class="explain-row">
+        <div class="explain-code">
+          mov ax, 0x1000<br>
+          mov es, ax<br>
+          xor bx, bx<br>
+          mov ah, 0x02<br>
+          mov al, 63<br>
+          mov ch, 0<br>
+          mov cl, 2<br>
+          mov dh, 0<br>
+          mov dl, [boot_drive]<br>
+          int 0x13<br>
+          jc disk_error</div>
+        <div class="explain-text">
+          Destination <code>ES:BX = 0x1000:0000</code> resolves to physical <code>0x10000</code> (exactly where the kernel lives).
+          <code>INT 0x13 / AH=0x02</code> = BIOS "Read Sectors". We read 16 sectors (8 KB) starting at cylinder 0, head 0, sector 2. If the Carry Flag is set on return, the read failed — jump to error.</div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Entering Protected Mode</div>
+      <div class="explain-row">
+        <div class="explain-code">
+          lgdt [gdt_descriptor]<br>
+          mov eax, cr0<br>
+          or eax, 0x1<br>
+          mov cr0, eax<br>
+          jmp 0x08:protected_mode_start</div>
+        <div class="explain-text">
+          <code>LGDT</code> loads the 6-byte GDT descriptor into GDTR. Setting bit 0 of CR0 flips the Protection Enable bit. The far jump to <code>0x08:protected_mode_start</code> flushes the instruction pipeline and reloads CS with the code segment selector — we are now in 32-bit protected mode.</div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">GDT — Global Descriptor Table</div>
+      <div class="info-box note">
+        <div class="info-box-label">What is the GDT?</div>
+        The GDT defines memory segments for protected mode. Each 8-byte entry describes a segment's base address, limit, and access rights. The CPU requires the first entry to be a null descriptor.
+      </div>
+      <div class="two-col">
+        <div class="feature-card">
+          <h4>gdt_code (selector 0x08)</h4>
+          <p>Base 0, Limit 4 GB, ring 0, executable, readable. 
+            <br>Bit flags: Present=1, DPL=0, Executable=1, 32-bit, 4KB granularity.</p>
+        </div>
+        <div class="feature-card">
+          <h4>gdt_data (selector 0x10)</h4>
+          <p>Same as code but Executable=0 (data segment), writable.
+            <br>Used for DS, ES, SS, FS, GS inside the kernel.</p>
+        </div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">print_string Subroutine</div>
+      <div class="explain-row">
+        <div class="explain-code">
+          lodsb<br>
+          or al, al<br>
+          jz .done<br>
+          mov ah, 0x0E<br>
+          int 0x10<br>
+          jmp .loop</div>
+        <div class="explain-text">
+          <code>LODSB</code> loads [DS:SI] into AL and increments SI automatically.
+          <code>or al, al</code> tests for the NUL terminator without changing the value.
+          <code>INT 0x10 / AH=0x0E</code> is BIOS Teletype Output — prints the character in AL to screen.</div>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">asm — boot signature</div>
+        </div>
+        <pre><span class="kw">times</span> <span class="num">510</span>-($-$$) <span class="kw">db</span> <span class="num">0</span>   <span class="cmt">; pad sector to 510 bytes</span>
+<span class="kw">dw</span> <span class="hex">0xAA55</span>               <span class="cmt">; boot signature (stored little-endian as 55 AA)</span></pre>
+      </div>
+
+      <div class="info-box warn">
+        <div class="info-box-label">Important</div>
+        After protected_mode_start, all segment registers (DS, ES, SS, FS, GS) are loaded with the data selector <code>0x10</code>. The stack moves to <code>0x90000</code>. Then <code>call 0x10000</code> jumps to the kernel.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ C. LINKER.LD ════════════════ -->
+  <div class="section-card ltr-C" id="sec-c">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">C</div>
+      <div class="section-title-wrap">
+        <div class="section-title">linker.ld — Linker Script</div>
+        <div class="section-meta">Controls how sections are laid out in memory</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">linker script</div>
+        </div>
+        <pre><span class="fn">ENTRY</span>(<span class="fn">kernel_main</span>)
+
+<span class="kw">SECTIONS</span> {
+    <span class="cmt">/* load address — must match bootloader's call 0x10000 */</span>
+    . = <span class="hex">0x10000</span>;
+
+    .text   : { *(.text)   }    <span class="cmt">/* compiled code (kernel_main lives here) */</span>
+    .rodata : { *(.rodata) }    <span class="cmt">/* string literals, const globals */</span>
+    .data   : { *(.data)   }    <span class="cmt">/* initialised global/static variables */</span>
+    .bss    : { *(.bss) *(COMMON) }  <span class="cmt">/* zero-initialised globals (IDT array) */</span>
+}</pre>
+      </div>
+
+      <div class="explain-row">
+        <div class="explain-code">. = 0x10000;</div>
+        <div class="explain-text">The <strong>location counter</strong> sets the Virtual Memory Address for every section. We start at <code>0x10000</code> because that's where <code>boot.asm</code> loads and jumps to <code>kernel.bin</code>. Physical addresses equal VMAs because paging is not enabled.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">.bss : { *(.bss) *(COMMON) }</div>
+        <div class="explain-text">The BSS section holds uninitialized globals. The bootloader does <em>not</em> zero it for us — we call <code>k_memset</code> in <code>idt_install()</code> to zero the 256-entry IDT array before use.</div>
+      </div>
+
+      <div class="info-box tip">
+        <div class="info-box-label">Why objcopy?</div>
+        The linker produces an ELF file. We strip ELF headers with <code>objcopy -O binary</code> to get a raw binary. The BIOS disk read loads raw bytes — it cannot parse ELF format.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ D. KERNEL.C ════════════════ -->
+  <div class="section-card ltr-D" id="sec-d">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">D</div>
+      <div class="section-title-wrap">
+        <div class="section-title">kernel.c — Section by Section</div>
+        <div class="section-meta">15 sections: types · VGA · strings · IDT · PIC · timer · keyboard · shell</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <!-- §0 Types -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§0 Type Definitions</div>
+      <div class="prose">
+        <p>No <code>&lt;stdint.h&gt;</code> in freestanding mode — we define everything ourselves. On IA-32: <code>char</code>=8-bit, <code>short</code>=16-bit, <code>int</code>=32-bit, <code>long long</code>=64-bit.</p>
+      </div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">c — types</div>
+        </div>
+        <pre><span class="kw">typedef</span> <span class="kw">unsigned</span> <span class="kw">char</span>       <span class="fn">uint8_t</span>;
+<span class="kw">typedef</span> <span class="kw">unsigned</span> <span class="kw">short</span>      <span class="fn">uint16_t</span>;
+<span class="kw">typedef</span> <span class="kw">unsigned</span> <span class="kw">int</span>        <span class="fn">uint32_t</span>;
+<span class="kw">typedef</span> <span class="kw">unsigned</span> <span class="kw">long long</span>  <span class="fn">uint64_t</span>;
+<span class="kw">typedef</span> uint32_t            <span class="fn">size_t</span>;
+<span class="kw">#define</span> NULL ((<span class="kw">void</span>*)<span class="num">0</span>)</pre>
+      </div>
+
+      <!-- §1 Port I/O -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§1 Port I/O Helpers</div>
+      <div class="info-box note">
+        <div class="info-box-label">x86 I/O Address Space</div>
+        x86 has a separate I/O address space accessed via <code>IN</code>/<code>OUT</code> instructions — not regular memory reads/writes. PIC, PIT, keyboard, VGA all live here.
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">outb(port, value)
+inb(port) → value
+io_wait()</div>
+        <div class="explain-text"><strong>outb/inb</strong> use inline assembly with <code>volatile</code> to prevent compiler optimisation. The <code>"dN"</code> constraint uses DX register or immediate for port numbers. <strong>io_wait()</strong> writes to port <code>0x80</code> (POST diagnostic port) — a harmless ~1-4µs delay for slow hardware like the 8259A PIC.</div>
+      </div>
+
+      <!-- §2 VGA -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§2 VGA Text-Mode Driver</div>
+      <div class="two-col">
+        <div class="feature-card">
+          <h4>0xB8000 — VGA Buffer</h4>
+          <p>Memory-mapped framebuffer. Each of 2000 cells is 2 bytes: low byte = ASCII character, high byte = color attribute.</p>
+        </div>
+        <div class="feature-card">
+          <h4>80×25 Grid</h4>
+          <p>16 foreground colors, 8 background colors. Attribute = <code>(bg &lt;&lt; 4) | fg</code>. Hardware cursor controlled via ports <code>0x3D4/0x3D5</code>.</p>
+        </div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">vga_scroll()
+vga_putchar(c)
+vga_update_cursor()</div>
+        <div class="explain-text"><strong>vga_scroll()</strong> uses memmove to shift rows 1–24 up by one row, then fills the last row with spaces. <strong>vga_putchar()</strong> handles <code>\n</code>, <code>\r</code>, <code>\b</code> and wraps columns/rows automatically.</div>
+      </div>
+
+      <!-- §3 Strings -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§3 String & Number Utilities</div>
+      <div class="prose">
+        <p>No libc — we implement only what we need: <code>k_strlen</code>, <code>k_strcmp</code>, <code>k_strncmp</code>, <code>k_strcpy</code>, <code>k_itoa</code> (unsigned int → decimal string), and <code>k_memset</code> (used to zero the IDT).</p>
+      </div>
+
+      <!-- §5 IDT -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§5 Interrupt Descriptor Table (IDT)</div>
+      <div class="info-box note">
+        <div class="info-box-label">How Interrupts Work</div>
+        When an interrupt fires, the CPU reads the 8-byte IDT entry for that vector, jumps to the ISR address stored in it, and automatically pushes EFLAGS, CS, EIP (and an error code for some exceptions) onto the stack.
+      </div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">c — IDT entry structure</div>
+        </div>
+        <pre><span class="kw">typedef struct</span> __attribute__((packed)) {
+    uint16_t offset_lo;  <span class="cmt">// ISR address bits [15:0]</span>
+    uint16_t selector;   <span class="cmt">// code segment = 0x08</span>
+    uint8_t  zero;       <span class="cmt">// reserved, must be 0</span>
+    uint8_t  type_attr;  <span class="cmt">// 0x8E = present, ring0, 32-bit interrupt gate</span>
+    uint16_t offset_hi;  <span class="cmt">// ISR address bits [31:16]</span>
+} idt_entry_t;</pre>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">type_attr = 0x8E
+= 1000_1110b</div>
+        <div class="explain-text">Bit 7 (P)=1 gate present. Bits 6-5 (DPL)=00 ring 0 only. Bit 4=0 not storage segment. Bits 3-0=1110 = 32-bit interrupt gate. An interrupt gate automatically clears IF (disables further interrupts on entry).</div>
+      </div>
+
+      <!-- §6 ISR Stubs -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§6 ISR Stub Macros</div>
+      <div class="explain-row">
+        <div class="explain-code">__attribute__((naked))
+STUB_ISR_NOERR(n):
+  cli; push $0; push $n
+  pusha
+  push %ds
+  → call isr_handler(regs)
+  ← pop %ds; popa
+  add $8, %esp
+  iret</div>
+        <div class="explain-text">A <strong>naked</strong> function has no compiler-generated prologue/epilogue — we control the stack entirely. We push a fake error code (0) so all exceptions have the same stack layout. We push <code>ESP</code> as the argument to <code>isr_handler</code> — it points to our <code>registers_t</code> on the stack. <strong>IRET</strong> restores EIP, CS, EFLAGS.</div>
+      </div>
+
+      <!-- §7 PIC -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§7 PIC — Programmable Interrupt Controller</div>
+      <div class="info-box warn">
+        <div class="info-box-label">Why Remap?</div>
+        The 8259A PIC's default IRQ0–IRQ7 map to vectors 0x08–0x0F — which <em>collide</em> with CPU exception vectors 8–15. We remap IRQs to vectors 0x20–0x2F (safe, above all 32 exceptions).
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">Master PIC: IRQ0-7 → 0x20-0x27
+Slave  PIC: IRQ8-15 → 0x28-0x2F
+
+ICW1: 0x11 (init, cascade)
+ICW2: offset vectors
+ICW3: cascade identity
+ICW4: 0x01 (8086 mode)</div>
+        <div class="explain-text">The 8259A is initialized with four Initialization Command Words (ICW). After remapping: IRQ0=timer (vec 32), IRQ1=keyboard (vec 33), IRQ8–15 on slave. <strong>EOI (0x20)</strong> must be sent to the PIC after every IRQ handler or no further interrupts of that type will fire.</div>
+      </div>
+
+      <!-- §8 Timer -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§8 Timer (IRQ 0)</div>
+      <div class="explain-row">
+        <div class="explain-code">volatile uint32_t timer_ticks = 0;
+
+irq_handler_timer() {
+    timer_ticks++;
+    pic_eoi(0);
+}</div>
+        <div class="explain-text"><code>volatile</code> is critical — this variable is modified in an ISR and read in normal code. Without it, the compiler may cache it in a register and never re-read from memory. The PIT fires IRQ0 at ~18.2 Hz by default. Dividing by 18 gives approximate seconds.</div>
+      </div>
+
+      <!-- §9 Keyboard -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§9 Keyboard (IRQ 1) — PS/2 Scancode Set 1</div>
+      <div class="two-col">
+        <div class="feature-card">
+          <h4>Scancode vs ASCII</h4>
+          <p>Scancodes are hardware key codes from the keyboard matrix. E.g., scancode <code>0x1E</code> = the 'A' key. We look up ASCII via <code>kb_map[]</code> or <code>kb_map_shift[]</code>.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Ring Buffer</h4>
+          <p>ISR writes to <code>kb_buf[kb_head]</code>, shell reads from <code>kb_buf[kb_tail]</code>. Standard lock-free single-producer/single-consumer queue.</p>
+        </div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">char kb_getchar() {
+    while (kb_head == kb_tail)
+        __asm__ volatile("hlt");
+}</div>
+        <div class="explain-text"><code>hlt</code> halts the CPU until the next interrupt. This is power-efficient — instead of a busy-spin consuming 100% CPU, we sleep until the keyboard ISR advances <code>kb_head</code>. Break codes (key-release) have bit 7 set (<code>0x80</code>) — we ignore these.</div>
+      </div>
+
+      <!-- §14 Shell -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§14 Shell</div>
+      <div class="prose">
+        <p>A minimal REPL (Read-Eval-Print Loop). The prompt <code>myos@kernel:~$</code> is printed in multiple colors. Line editing supports backspace. Commands are dispatched via <code>k_strcmp</code>. <code>cmd_reboot()</code> sends <code>0xFE</code> to PS/2 controller port <code>0x64</code> — this pulses the CPU RESET line for a hardware reset.</p>
+      </div>
+
+      <!-- §15 kernel_main -->
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">§15 Kernel Entry Point</div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">c — kernel_main()</div>
+        </div>
+        <pre><span class="kw">void</span> <span class="fn">kernel_main</span>(<span class="kw">void</span>) {
+    <span class="fn">pic_remap</span>();        <span class="cmt">// MUST be first — remap before enabling interrupts</span>
+    <span class="fn">idt_install</span>();      <span class="cmt">// fill 256 IDT gates, load IDTR</span>
+    __asm__ volatile(<span class="str">"sti"</span>);  <span class="cmt">// interrupts are LIVE from here</span>
+
+    <span class="fn">draw_banner</span>();      <span class="cmt">// splash screen</span>
+    <span class="fn">delay_ticks</span>(<span class="num">18</span> * <span class="num">2</span>);  <span class="cmt">// ~2 second wait</span>
+    <span class="fn">kb_getchar</span>();       <span class="cmt">// or press any key</span>
+
+    <span class="fn">vga_clear</span>();
+    <span class="fn">shell_run</span>();        <span class="cmt">// never returns</span>
+
+    __asm__ volatile(<span class="str">"cli; hlt"</span>);  <span class="cmt">// safety net</span>
+}</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ E. MAKEFILE ════════════════ -->
+  <div class="section-card ltr-E" id="sec-e">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">E</div>
+      <div class="section-title-wrap">
+        <div class="section-title">Makefile — Build System</div>
+        <div class="section-meta">Compile · link · strip · disk image creation</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">makefile — compiler flags</div>
+        </div>
+        <pre>CFLAGS = -m32 -ffreestanding -fno-stack-protector \
+         -nostdlib -O2 -Wall -Wextra -std=c11</pre>
+      </div>
+
+      <div class="explain-row">
+        <div class="explain-code">-m32</div>
+        <div class="explain-text">Generate IA-32 (32-bit x86) machine code, regardless of host architecture.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">-ffreestanding</div>
+        <div class="explain-text">No hosted environment assumed. Disables implicit standard headers. Allows <code>__asm__</code>, removes assumptions about <code>main()</code>.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">-fno-stack-protector</div>
+        <div class="explain-text">Disables stack canary — it requires <code>__stack_chk_fail</code> from libc, which we don't have.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">-nostdlib</div>
+        <div class="explain-text">Don't link any standard libraries (no libc, no libgcc startup). Everything comes from our code only.</div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(192,132,252,0.1);color:var(--accent5)">Building the Disk Image</div>
+      <div class="explain-row">
+        <div class="explain-code">dd if=/dev/zero of=os.img
+    bs=512 count=2880</div>
+        <div class="explain-text">Create a 1.44 MB floppy image (2880 × 512 bytes) filled with zeros. This is the blank disk we'll write boot and kernel sectors into.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">dd if=boot.bin of=os.img
+    bs=512 count=1 conv=notrunc</div>
+        <div class="explain-text">Write the 512-byte boot sector to sector 1. <code>conv=notrunc</code> prevents truncating the output file after writing — preserving the rest of the image.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">dd if=kernel.bin of=os.img
+    bs=512 seek=1 conv=notrunc</div>
+        <div class="explain-text"><code>seek=1</code> skips 1 block (512 bytes) before writing — placing the kernel at sector 2, exactly where <code>boot.asm</code> reads from (cylinder 0, head 0, sector 2).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ F. ROADMAP ════════════════ -->
+  <div class="section-card ltr-F" id="sec-f">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">F</div>
+      <div class="section-title-wrap">
+        <div class="section-title">What to Implement Next — Roadmap</div>
+        <div class="section-meta">Beginner → Intermediate → Advanced features</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="roadmap-tier tier-beginner">
+        <div class="tier-label">Beginner</div>
+        <div class="roadmap-item"><div class="roadmap-num">1</div><div class="roadmap-text"><strong>PIT configuration</strong> <span>— reprogram 8253/8254 to exact frequency (e.g. 1000 Hz) via ports 0x40–0x43</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">2</div><div class="roadmap-text"><strong>k_printf</strong> <span>— printf supporting %d, %x, %s, %c — makes debugging vastly easier</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">3</div><div class="roadmap-text"><strong>More shell commands</strong> <span>— time (uptime), meminfo (memory map display)</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">4</div><div class="roadmap-text"><strong>Kernel heap</strong> <span>— a simple bump allocator: advance a pointer on malloc(), never free</span></div></div>
+      </div>
+
+      <div class="roadmap-tier tier-intermediate">
+        <div class="tier-label">Intermediate</div>
+        <div class="roadmap-item"><div class="roadmap-num">5</div><div class="roadmap-text"><strong>Memory Management</strong> <span>— parse BIOS E820 map, physical page frame allocator, enable paging (CR3, CR0.PG)</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">6</div><div class="roadmap-text"><strong>Filesystem</strong> <span>— read FAT12 from floppy image, implement ls, cat</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">7</div><div class="roadmap-text"><strong>Cooperative multitasking</strong> <span>— save/restore register state, round-robin scheduler in timer ISR</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">8</div><div class="roadmap-text"><strong>System calls</strong> <span>— add INT 0x80 gate to IDT, user programs request kernel services</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">9</div><div class="roadmap-text"><strong>ELF loader</strong> <span>— parse statically-linked ELF binary and jump to its entry point</span></div></div>
+      </div>
+
+      <div class="roadmap-tier tier-advanced">
+        <div class="tier-label">Advanced</div>
+        <div class="roadmap-item"><div class="roadmap-num">10</div><div class="roadmap-text"><strong>Preemptive multitasking</strong> <span>— switch tasks from timer ISR using TSS</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">11</div><div class="roadmap-text"><strong>Virtual memory per-process</strong> <span>— each process gets its own page directory</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">12</div><div class="roadmap-text"><strong>User mode (ring 3)</strong> <span>— use IRET to drop to privilege level 3; INT 0x80 returns to ring 0</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">13</div><div class="roadmap-text"><strong>ATA/IDE driver</strong> <span>— real disk I/O via ports 0x1F0–0x1F7</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">14</div><div class="roadmap-text"><strong>ext2 filesystem</strong> <span>— read/write proper Linux-compatible filesystem</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">15</div><div class="roadmap-text"><strong>Network stack</strong> <span>— RTL8139/e1000 NIC driver + ARP + IP + TCP</span></div></div>
+        <div class="roadmap-item"><div class="roadmap-num">16</div><div class="roadmap-text"><strong>USB</strong> <span>— UHCI/EHCI controller driver (very complex)</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ G. GRAPHICS ════════════════ -->
+  <div class="section-card ltr-G" id="sec-g">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">G</div>
+      <div class="section-title-wrap">
+        <div class="section-title">Graphics — VESA/VBE Framebuffer</div>
+        <div class="section-meta">Switching from text mode to pixel-based drawing</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="two-col">
+        <div class="feature-card">
+          <h4>Current: VGA Text Mode</h4>
+          <p>80×25 cells at 0xB8000. CPU writes char+attribute pairs. Hardware does font rendering. Fast, no driver complexity.</p>
+        </div>
+        <div class="feature-card">
+          <h4>Goal: Linear Framebuffer</h4>
+          <p>800×600 or 1024×768 at 24/32 bpp. Every pixel individually addressable. Required for GUI, images, custom fonts.</p>
+        </div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(251,146,60,0.1);color:var(--orange)">Option 1 — VESA BIOS Extensions (Recommended)</div>
+      <div class="info-box warn">
+        <div class="info-box-label">Critical</div>
+        VBE must be called <em>before</em> entering protected mode — while still in real mode — because VBE uses INT 0x10 BIOS calls.
+      </div>
+      <ol class="step-list">
+        <li>Set VBE mode: <code>INT 0x10, AX=0x4F02, BX=(mode | 0x4000)</code>. Mode <code>0x118</code> = 1024×768×24bpp, <code>0x115</code> = 800×600×24bpp. Bit 14 enables the Linear Framebuffer (LFB).</li>
+        <li>Query mode info: <code>INT 0x10, AX=0x4F01, CX=mode</code> fills a <code>VbeModeInfo</code> struct with <code>PhysBasePtr</code>, <code>Pitch</code>, <code>XResolution</code>, <code>YResolution</code>, <code>BitsPerPixel</code>.</li>
+        <li>Save <code>PhysBasePtr</code>, <code>Pitch</code>, <code>Width</code>, <code>Height</code> (e.g. at <code>0x9000</code>) before jumping to protected mode, then read them in the kernel.</li>
+      </ol>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">c — put_pixel()</div>
+        </div>
+        <pre><span class="kw">uint8_t</span> *fb = (<span class="kw">uint8_t</span> *)physBasePtr;
+
+<span class="kw">void</span> <span class="fn">put_pixel</span>(<span class="kw">int</span> x, <span class="kw">int</span> y, uint32_t color) {
+    uint32_t offset = y * pitch + x * (bpp / <span class="num">8</span>);
+    fb[offset + <span class="num">0</span>] = color & <span class="hex">0xFF</span>;          <span class="cmt">// Blue</span>
+    fb[offset + <span class="num">1</span>] = (color >> <span class="num">8</span>) & <span class="hex">0xFF</span>;  <span class="cmt">// Green</span>
+    fb[offset + <span class="num">2</span>] = (color >> <span class="num">16</span>) & <span class="hex">0xFF</span>; <span class="cmt">// Red</span>
+}</pre>
+      </div>
+
+      <div class="sub-label" style="background:rgba(251,146,60,0.1);color:var(--orange)">Option 2 — Bochs VBE Extensions (BGA)</div>
+      <div class="prose"><p>QEMU emulates the Bochs Graphics Adapter. Set resolution/bit-depth by writing to I/O ports <code>0x01CE</code> (index) and <code>0x01CF</code> (data) directly from protected mode — no BIOS call needed. Simpler for development but won't work on real hardware.</p></div>
+
+      <div class="sub-label" style="background:rgba(251,146,60,0.1);color:var(--orange)">PSF Bitmap Fonts</div>
+      <div class="prose"><p>Download a PC Screen Font (.psf) from <code>/usr/share/consolefonts/</code>. Each glyph is 16 rows × 8 bits. To draw character 'A' at (x, y): iterate each row and bit, call <code>put_pixel</code> with foreground or background color based on whether the font bit is set.</p></div>
+    </div>
+  </div>
+
+  <!-- ════════════════ H. SHELL ════════════════ -->
+  <div class="section-card ltr-H" id="sec-h">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">H</div>
+      <div class="section-title-wrap">
+        <div class="section-title">Shell — Building a Real Interactive Shell</div>
+        <div class="section-meta">History · tab completion · argument parsing · pipes · env vars</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-label" style="background:rgba(91,143,255,0.1);color:var(--accent)">1. Command History</div>
+      <div class="prose"><p>Keep a circular array of the last N command strings. On arrow-up/arrow-down (scancodes <code>0x48</code>, <code>0x50</code>), recall previous commands. Erase the current line (backspace to column 0), then print the historic command.</p></div>
+
+      <div class="sub-label" style="background:rgba(91,143,255,0.1);color:var(--accent)">2. Tab Completion</div>
+      <div class="prose"><p>On scancode <code>0x0F</code> (Tab), look at the current partial input and find commands that start with it. If exactly one match, complete it. If multiple matches, print them as options (like bash).</p></div>
+
+      <div class="sub-label" style="background:rgba(91,143,255,0.1);color:var(--accent)">3. argc/argv Parsing</div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">c — tokenize command line</div>
+        </div>
+        <pre><span class="kw">char</span> *argv[<span class="num">16</span>]; <span class="kw">int</span> argc = <span class="num">0</span>;
+<span class="kw">char</span> *p = cmd_buf;
+<span class="kw">while</span> (*p) {
+    <span class="kw">while</span> (*p == <span class="str">' '</span>) p++;        <span class="cmt">// skip spaces</span>
+    <span class="kw">if</span> (*p) argv[argc++] = p;     <span class="cmt">// start of token</span>
+    <span class="kw">while</span> (*p && *p != <span class="str">' '</span>) p++; <span class="cmt">// find end</span>
+    <span class="kw">if</span> (*p) *p++ = <span class="str">'\0'</span>;         <span class="cmt">// NUL-terminate</span>
+}</pre>
+      </div>
+
+      <div class="sub-label" style="background:rgba(91,143,255,0.1);color:var(--accent)">4 & 5. Pipes, Redirection, Environment Variables</div>
+      <div class="info-box tip">
+        <div class="info-box-label">Design Note</div>
+        True piping requires multiple concurrent processes sharing a buffer — which needs multitasking. Environment variables can be implemented as a simple key-value store: an array of <code>"KEY=VALUE"</code> strings with <code>get_env()</code>/<code>set_env()</code> helpers.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ I. PS/2 DRIVER ════════════════ -->
+  <div class="section-card ltr-I" id="sec-i">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">I</div>
+      <div class="section-title-wrap">
+        <div class="section-title">Keyboard & Mouse — Full PS/2 Driver</div>
+        <div class="section-meta">Extended scancodes · Caps Lock · Scan Code Set 2 · PS/2 mouse IRQ12</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Keyboard Improvements</div>
+      <div class="explain-row">
+        <div class="explain-code">Extended scancodes:
+0xE0 prefix →
+next byte = ext key
+
+Caps Lock: toggle on
+make-code, track state</div>
+        <div class="explain-text">Many keys (arrows, Home, End, Insert, Delete, F5–F12) send 2-byte sequences: <code>0xE0</code> followed by a second scancode. Detect <code>0xE0</code> in the ISR, set a flag, and use a separate extended-key table for the next scancode.</div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Adding PS/2 Mouse (IRQ 12)</div>
+      <ol class="step-list">
+        <li>Send command <code>0xA8</code> to port <code>0x64</code> (enable mouse port), then <code>0xD4</code> + <code>0xF4</code> to activate streaming mode.</li>
+        <li>Install an IDT gate for vector 44 (IRQ12 = 32+12). The mouse sends 3-byte packets: status byte, X movement (signed), Y movement (signed, Y inverted vs screen).</li>
+        <li>In text mode: draw cursor by inverting the attribute byte at the current mouse cell. In graphics mode: blit a small bitmap at (mouse_x, mouse_y), redraw background on move.</li>
+      </ol>
+
+      <div class="info-box note">
+        <div class="info-box-label">Mouse Button Bits (Byte 0)</div>
+        Bit 0 = left button · Bit 1 = right button · Bit 2 = middle button
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ J. FILESYSTEM ════════════════ -->
+  <div class="section-card ltr-J" id="sec-j">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">J</div>
+      <div class="section-title-wrap">
+        <div class="section-title">System Commands — ls, cd, cat via FAT12</div>
+        <div class="section-meta">FAT12 filesystem layout · directory entries · cluster chain parsing</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="info-box note">
+        <div class="info-box-label">Prerequisite</div>
+        Commands like <code>ls</code>, <code>cat</code>, <code>cd</code> require a filesystem. FAT12 (used on 1.44 MB floppies) is the simplest real filesystem to implement.
+      </div>
+
+      <div class="sub-label" style="background:rgba(0,212,170,0.1);color:var(--accent3)">FAT12 Disk Layout</div>
+      <table class="mem-map">
+        <thead><tr><th>Sectors</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td class="addr">0</td><td>Boot sector (BPB + boot code)</td></tr>
+          <tr><td class="addr">1–9</td><td>FAT copy 1 (allocation table)</td></tr>
+          <tr><td class="addr">10–18</td><td>FAT copy 2 (redundant)</td></tr>
+          <tr><td class="addr">19–32</td><td>Root directory (224 entries max)</td></tr>
+          <tr class="us"><td class="addr">33+</td><td>Data clusters (cluster 2 = sector 33)</td></tr>
+        </tbody>
+      </table>
+
+      <div class="sub-label" style="background:rgba(0,212,170,0.1);color:var(--accent3)">FAT12 Cluster Entry Decoding</div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">c — read FAT12 entry N</div>
+        </div>
+        <pre><span class="cmt">// FAT12: 12-bit entries, 3 bytes encode 2 entries</span>
+<span class="kw">if</span> (N % <span class="num">2</span> == <span class="num">0</span>)
+    entry = fat[N*<span class="num">3</span>/<span class="num">2</span>] | ((fat[N*<span class="num">3</span>/<span class="num">2</span>+<span class="num">1</span>] & <span class="hex">0x0F</span>) << <span class="num">8</span>);
+<span class="kw">else</span>
+    entry = (fat[N*<span class="num">3</span>/<span class="num">2</span>] >> <span class="num">4</span>) | (fat[N*<span class="num">3</span>/<span class="num">2</span>+<span class="num">1</span>] << <span class="num">4</span>);
+
+<span class="cmt">// 0x000 = free cluster</span>
+<span class="cmt">// 0xFF8-0xFFF = end of file</span>
+<span class="cmt">// else = next cluster number</span></pre>
+      </div>
+
+      <div class="sub-label" style="background:rgba(0,212,170,0.1);color:var(--accent3)">Shell Commands via FAT12</div>
+      <div class="explain-row">
+        <div class="explain-code">ls</div>
+        <div class="explain-text">Read the root directory table. Print all entries where <code>attr != 0</code> and <code>name[0] != 0xE5</code> (deleted). Show name, size, date.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">cat filename</div>
+        <div class="explain-text">Find the file's <code>DirEntry</code>, follow the cluster chain through the FAT, read each cluster's data bytes, print to screen.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">cd dirname</div>
+        <div class="explain-text">FAT12 subdirectory entries have <code>attr = 0x10</code>. Read the directory cluster for the target dir. Keep a "current directory" cluster number in a global variable.</div>
+      </div>
+
+      <div class="info-box tip">
+        <div class="info-box-label">Ramdisk Approach (Easier for Development)</div>
+        Pass <code>-initrd myfiles.img</code> to QEMU. In the kernel, parse the Multiboot info structure to find the ramdisk's physical address and size, then parse FAT12 directly from that RAM buffer — no disk driver needed.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════ K. QEMU ════════════════ -->
+  <div class="section-card ltr-K" id="sec-k">
+    <div class="section-header" onclick="toggle(this)">
+      <div class="section-letter">K</div>
+      <div class="section-title-wrap">
+        <div class="section-title">Running with QEMU — Full Reference</div>
+        <div class="section-meta">Basic run · debugging · GDB · useful flags · bootable ISO</div>
+      </div>
+      <div class="collapse-icon">▼</div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">Basic & Debug Runs</div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">shell — run commands</div>
+        </div>
+        <pre><span class="cmt"># Basic run</span>
+qemu-system-i386 -drive format=raw,file=build/os.img
+
+<span class="cmt"># With serial + interrupt debugging</span>
+qemu-system-i386 \
+  -drive format=raw,file=build/os.img \
+  -serial stdio \       <span class="cmt"># serial port → your terminal</span>
+  -d int,cpu_reset \    <span class="cmt"># log all interrupts and CPU resets</span>
+  -no-reboot            <span class="cmt"># don't auto-reboot on triple fault</span>
+
+<span class="cmt"># GDB debugging — Terminal 1:</span>
+qemu-system-i386 -drive format=raw,file=build/os.img -s -S
+
+<span class="cmt"># GDB — Terminal 2:</span>
+gdb -ex "target remote :1234" \
+    -ex "symbol-file build/kernel.elf" \
+    -ex "break kernel_main" \
+    -ex "continue"</pre>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">Useful QEMU Flags</div>
+      <div class="explain-row">
+        <div class="explain-code">-s / -S</div>
+        <div class="explain-text"><code>-s</code> shorthand for <code>-gdb tcp::1234</code>. <code>-S</code> freezes the CPU at startup, waiting for GDB to connect before executing any instructions.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">-m 32M
+-vga std
+-display curses
+-nographic</div>
+        <div class="explain-text">Set VM RAM. <code>-vga std</code> needed for VBE modes. <code>-display curses</code> uses text-mode display for SSH sessions. <code>-nographic</code> disables the window entirely — serial only.</div>
+      </div>
+
+      <div class="sub-label" style="background:rgba(255,209,102,0.1);color:var(--accent4)">Bootable ISO via GRUB</div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-lang">shell — create bootable ISO</div>
+        </div>
+        <pre>mkdir -p iso/boot/grub
+cp build/kernel.bin iso/boot/
+
+<span class="cmt"># grub.cfg</span>
+echo <span class="str">'set timeout=0
+set default=0
+menuentry "MyOS" {
+    multiboot /boot/kernel.bin
+}'</span> > iso/boot/grub/grub.cfg
+
+grub-mkrescue -o myos.iso iso/
+qemu-system-i386 -cdrom myos.iso</pre>
+      </div>
+      <div class="info-box tip">
+        <div class="info-box-label">Why GRUB?</div>
+        Using GRUB as the bootloader gives you Multiboot support, memory map discovery, and the ability to load modules (ramdisk) for free — without writing any of it yourself.
+      </div>
+    </div>
+  </div>
+
+</div><!-- /layout -->
+
+<footer>
+  <div>MyOS Documentation &nbsp;·&nbsp; <span>END OF DOCUMENTATION</span></div>
+  <div style="margin-top:0.4rem;font-size:0.68rem;color:var(--text-dim)">// Every file. Every line. Every concept.</div>
+</footer>
+
+<script>
+  function toggle(header) {
+    const card = header.closest('.section-card');
+    card.classList.toggle('open');
+  }
+
+  let allOpen = true;
+  function toggleAll() {
+    const cards = document.querySelectorAll('.section-card');
+    allOpen = !allOpen;
+    cards.forEach(c => allOpen ? c.classList.add('open') : c.classList.remove('open'));
+    document.getElementById('expandAll').textContent = allOpen ? '⊟ Collapse All' : '⊞ Expand All';
+  }
+
+  function toggleTheme() {
+    const root = document.documentElement;
+    const isDark = root.getAttribute('data-theme') === 'dark';
+    root.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    document.getElementById('themeIcon').textContent = isDark ? '☾' : '☀';
+    document.getElementById('themeLabel').textContent = isDark ? 'Dark' : 'Light';
+  }
+
+  // Intersection observer for section reveal animations
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.style.animationDelay = '0s';
+        e.target.style.opacity = '1';
+        e.target.style.transform = 'none';
+      }
+    });
+  }, { threshold: 0.05 });
+
+  document.querySelectorAll('.section-card').forEach(el => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(20px)';
+    el.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+    observer.observe(el);
+  });
+</script>
+</body>
+</html>
