@@ -887,7 +887,7 @@ static void cmd_help(void) {
 
 static void cmd_about(void) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("\n  OS — A Minimal x86 Kernel\n");
+    vga_puts("\n  OS - A Minimal x86 Kernel\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("  Written in C and x86 assembly.\n");
     vga_puts("  Architecture : IA-32 (32-bit protected mode)\n");
