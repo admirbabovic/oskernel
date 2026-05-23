@@ -630,10 +630,14 @@
         <div class="explain-code">
           [BITS 16]
           <br>
-          [ORG 0x7C00]</div>
+          [ORG 0x7C00]
+          <br>
+          start:
+        </div>
         <div class="explain-text">
           <code>BITS 16</code> tells NASM to emit 16-bit machine code (CPU starts in real mode). <br>
-          <code>ORG 0x7C00</code> tells NASM the code loads at physical address 0x7C00, making all label addresses correct relative to that base.</div>
+          <code>ORG 0x7C00</code> tells NASM the code loads at physical address 0x7C00, making all label addresses correct relative to that base.<br>
+          <code>start:</code> The entry point label. Execution begins here after the BIOS jumps to 0x7C00.</div>
       </div>
       <div class="explain-row">
         <div class="explain-code">
@@ -643,16 +647,33 @@
           mov es, ax<br>
           mov ss, ax</div>
         <div class="explain-text">
-          <code>cli</code> disables maskable interrupts while we set up the stack.
-          <code>xor ax, ax</code> sets AX=0. Setting <code>DS</code>, <code>ES</code>, <code>SS</code> all to 0 gives us a flat memory model where effective addresses equal their offsets — no segment aliasing bugs.</div>
+          <code>cli</code> disables maskable interrupts while we set up the stack.<br>
+          <code>xor ax, ax</code> sets AX=0 (faster/smaller than "mov ax, 0" and sets the Zero Flag).<br>
+          <code>mov ds, ax</code>, <code>mov es, ax</code> <code>mov ss, ax</code><br>
+          In real mode, memory addresses are formed as (segment × 16 + offset).
+          Setting DS (Data Segment), ES (Extra Segment) and SS (Stack Segment) all to
+          zero means we use a "flat" model where (segment × 16 = 0), so effective
+          addresses equal their offsets. This avoids unexpected aliasing bugs.</div>
       </div>
       <div class="explain-row">
         <div class="explain-code">
           mov sp, 0x7C00<br>
           sti</div>
         <div class="explain-text">
-          Stack pointer at <code>0x7C00</code> — the stack grows <em>downward</em>, so the first PUSH writes to <code>0x7BFE</code>, safely below the bootloader.
-          <code>sti</code> re-enables interrupts once the stack is valid.</div>
+          <code>mov sp, 0x7C00</code> Stack pointer at <code>0x7C00</code> — the stack grows <em>DOWNWARD</em>, so the first PUSH writes to <code>0x7BFE</code>, safely below the bootloader. The stack won't
+          collide with us until it gets very large<br>
+          <code>sti</code> "Set Interrupt Flag" — re-enable interrupts. The stack is now valid, so BIOS interrupt service routines are safe to call.</div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">
+          mov [boot_drive], dl<br>
+          mov si, msg_loading<br>
+          call print_string
+        </div>
+        <div class="explain-text">
+          <code>mov [boot_drive], dl</code> When the BIOS calls our bootloader it puts the drive number (0x00 = floppy, 0x80 = first hard disk) in DL. We save it to the variable boot_drive so we can use it later when reading more sectors.<br>
+          <code>mov si, msg_loading</code> <code>call print_string</code> Load the address of our "Loading kernel..." string into SI (Source Index), then call our print routine. SI is the pointer register used by LODSB.
+        </div>
       </div>
 
       <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Disk Read (BIOS INT 0x13)</div>
@@ -670,20 +691,54 @@
           int 0x13<br>
           jc disk_error</div>
         <div class="explain-text">
-          Destination <code>ES:BX = 0x1000:0000</code> resolves to physical <code>0x10000</code> (exactly where the kernel lives).
-          <code>INT 0x13 / AH=0x02</code> = BIOS "Read Sectors". We read 16 sectors (8 KB) starting at cylinder 0, head 0, sector 2. If the Carry Flag is set on return, the read failed — jump to error.</div>
+          <code>mov ax, 0x1000</code> <code>mov es, ax</code> <code>xor bx, bx</code>
+          <br>
+          Set up the destination for the disk read: <i>ES:BX = 0x1000:0x0000.</i>
+          In real-mode segmentation this resolves to physical address <code>0x10000</code>. This is exactly where our kernel will be loaded and where the linker script places it.
+          <br>
+          <code>mov ah, 0x02</code>
+          BIOS INT 0x13 function 0x02 = "Read Sectors From Drive".
+          <br>
+          <code>mov al, 16</code>
+          Read 16 sectors = 16 × 512 = 8192 bytes. That's plenty for our kernel. If your kernel grows, increase this number (max ~63 for a floppy layout).
+          <br>
+          <code>mov ch, 0</code>
+          Cylinder 0 (the first cylinder on the disk).
+          <br>
+          <code>mov cl, 2</code>
+          Starting sector 2 (sectors are 1-indexed; sector 1 is the boot sector itself).
+          <br>
+          <code>mov dh, 0</code>
+          Head 0 (the first read/write head).
+          <br>
+          <code>mov dl, [boot_drive]</code>
+          The drive number we saved earlier.
+          <br>
+          <code>int 0x13</code>
+          Call the BIOS disk interrupt. On return: CF (Carry Flag) is set on error.
+          <br>
+          <code>jc disk_error</code>
+          "Jump if Carry" — if the read failed, jump to our error handler.
+        </div>
       </div>
 
       <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">Entering Protected Mode</div>
       <div class="explain-row">
         <div class="explain-code">
+          cli<br>
           lgdt [gdt_descriptor]<br>
           mov eax, cr0<br>
           or eax, 0x1<br>
           mov cr0, eax<br>
           jmp 0x08:protected_mode_start</div>
         <div class="explain-text">
-          <code>LGDT</code> loads the 6-byte GDT descriptor into GDTR. Setting bit 0 of CR0 flips the Protection Enable bit. The far jump to <code>0x08:protected_mode_start</code> flushes the instruction pipeline and reloads CS with the code segment selector — we are now in 32-bit protected mode.</div>
+          <code>cli</code>
+          Disable interrupts again before entering protected mode. Real-mode BIOS ISRs are not valid in protected mode; we must not let them fire during the switch.<br>
+          <code>lgdt [gdt_descriptor]</code> "Load Global Descriptor Table Register" — tells the CPU where our GDT is. The GDTR register is 6 bytes: 2-byte limit + 4-byte base address.<br>
+          <code>mov eax, cr0</code> <code>or eax, 0x1</code> <code>mov cr0, eax</code><br>
+          CR0 bit 0 is the Protection Enable (PE) bit. Setting it switches the CPU from real mode to protected mode. We must immediately do a far jump to flush the instruction pipeline (the CPU may have pre-fetched real-mode instructions).<br>
+          <code>jmp 0x08:protected_mode_start</code> A FAR JUMP to segment 0x08 (code segment selector in the GDT), offset protected_mode_start. The CPU loads CS with 0x08 and reloads the instruction pipeline with 32-bit protected-mode decoding. From this point forward we are in 32-bit protected mode.
+        </div>
       </div>
 
       <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">GDT — Global Descriptor Table</div>
@@ -707,16 +762,46 @@
       <div class="sub-label" style="background:rgba(255,107,107,0.1);color:var(--accent2)">print_string Subroutine</div>
       <div class="explain-row">
         <div class="explain-code">
-          lodsb<br>
-          or al, al<br>
-          jz .done<br>
-          mov ah, 0x0E<br>
-          int 0x10<br>
-          jmp .loop</div>
+          print_string:<br>
+          &emsp;pusha
+          </div>
         <div class="explain-text">
-          <code>LODSB</code> loads [DS:SI] into AL and increments SI automatically.
-          <code>or al, al</code> tests for the NUL terminator without changing the value.
-          <code>INT 0x10 / AH=0x0E</code> is BIOS Teletype Output — prints the character in AL to screen.</div>
+          <code>pusha</code> Save all general-purpose registers to the stack. PUSHA pushes AX, CX, DX, BX, SP, BP, SI, DI in that order.
+        </div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">
+          .loop:<br>
+          &emsp;lodsb<br>
+          &emsp;or al, al<br>
+          &emsp;jz .done<br>
+          &emsp;mov ah, 0x0E<br>
+          &emsp;mov bh, 0x00<br>
+          &emsp;mov bl, 0x07<br>
+          &emsp;int 0x10<br>
+          &emsp;jmp .loop
+        </div>
+        <div class="explain-text">
+          <code>lodsb</code> "Load String Byte" — loads the byte at [DS:SI] into AL and increments SI. This auto-advances the pointer through our string.<br>
+          <code>or al, al</code> Bitwise OR of AL with itself. This doesn't change the value but sets the Zero Flag if AL == 0 (which is our NUL terminator).<br>
+          <code>jz .done</code> If AL was 0 (end of string), jump to .done.<br>
+          <code>mov ah, 0x0E</code> BIOS INT 0x10 function 0x0E = "Teletype Output" (write one character).<br>
+          <code>mov bh, 0x00</code> Page 0 (the current display page, usually page 0).<br>
+          <code>mov bl, 0x07</code> Foreground colour attribute (light grey on black) in some BIOS implementations.<br>
+          <code>INT 0x10 / AH=0x0E</code> Call BIOS video interrupt to print the character in AL.<br>
+          <code>jmp .loop</code> Repeat for the next character.
+        </div>
+      </div>
+      <div class="explain-row">
+        <div class="explain-code">
+          .done:<br>
+          &emsp;popa<br>
+          &emsp;ret
+        </div>
+        <div class="explain-text">
+          <code>popa</code> Restore all registers we saved with PUSHA.<br>
+          <code>ret</code> Return to the caller.
+        </div>
       </div>
 
       <div class="code-block">
