@@ -461,7 +461,9 @@ static const char kb_map[128] = {
     '\'', '`', 0, '\\',                                 /* 0x28–0x2B */
     'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', /* 0x2C–0x35 */
     0, '*', 0, ' ',                                     /* 0x36–0x39 */
-    /* remainder all 0 */
+    0, 0, 0, 0, 0, 0, 0, 0,                           /* 0x3A-0x41 */
+    0, 0, 0, 0, 0, 0,                                 /* 0x42-0x47 */
+     '\x11', 0, 0, 0, 0, 0, 0, 0, '\x12',              /* 0x48-0x50 (Up=0x48, Down=0x50) */
 };
 
 /* Shifted scancode → ASCII */
@@ -474,6 +476,9 @@ static const char kb_map_shift[128] = {
     '"', '~', 0, '|', '\\',
     'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?',
     0, '*', 0, ' ',
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0,
+    '\x11', 0, 0, 0, 0, 0, 0, 0, '\x12',
 };
 
 /* Key state */
@@ -815,9 +820,15 @@ static void delay_ticks(uint32_t ticks) {
  * ========================================================================= */
 
 #define CMD_BUF_SIZE 128
+#define HISTORY_MAX 10
 
 static char cmd_buf[CMD_BUF_SIZE];
 static int  cmd_len = 0;
+
+/* History buffer */
+static char history[HISTORY_MAX][CMD_BUF_SIZE];
+static int history_count = 0;
+static int history_idx = 0;
 
 /* Print the prompt */
 static void shell_prompt(void) {
@@ -968,19 +979,79 @@ static void shell_run(void) {
     while (1) {
         shell_prompt();
         cmd_len = 0;
+        history_idx = history_count;
 
         /* Read characters until Enter */
         while (1) {
             char c = kb_getchar();
+
             if (c == '\n') {
                 vga_putchar('\n');
+
+                /* null-terminating a command before saving in history */
+                cmd_buf[cmd_len] = '\0';
+
+                if (cmd_len > 0) {
+                    k_strcpy(history[history_count % HISTORY_MAX], cmd_buf);
+                    history_count++;
+                }
                 break;
             } else if (c == '\b') {
                 if (cmd_len > 0) {
                     cmd_len--;
                     vga_putchar('\b');
                 }
-            } else if (cmd_len < CMD_BUF_SIZE - 1) {
+            } else if (c == '\t') {
+                /* --- TAB COMPLETION --- */
+                if (cmd_len > 0) {
+                    const char *commands[] = {"help", "clear", "about", "uptime", "color", "reboot", "exit", "halt", "echo"};
+                    int num_cmds = 9;
+                    int match_idx = -1;
+                    int matches = 0;
+
+                    /* Searching for all the commands that begin with current input */
+                    for (int i = 0; i < num_cmds; i++) {
+                        if (k_strncmp(commands[i], cmd_buf, cmd_len) == 0) {
+                            match_idx = i;
+                            matches++;
+                        }
+                    }
+
+                    /* Autocomplete if there is 1 match */
+                    if (matches == 1) {
+                        const char *match = commands[match_idx];
+                        while (cmd_len < (int)k_strlen(match)) {
+                            char mc = match[cmd_len];
+                            cmd_buf[cmd_len++] = mc;
+                            vga_putchar(mc);
+                        }
+                    }
+                }
+            } else if (c == '\x11') {
+                /* --- UP ARROW --- */
+                int oldest = (history_count > HISTORY_MAX) ? (history_count - HISTORY_MAX) : 0;
+                if (history_idx > oldest) {
+                    while (cmd_len > 0) { vga_putchar('\b'); cmd_len--; }
+                    history_idx--;
+                    k_strcpy(cmd_buf, history[history_idx % HISTORY_MAX]);
+                    cmd_len = k_strlen(cmd_buf);
+                    vga_puts(cmd_buf);
+                }
+            } else if (c == '\x12') {
+                /* --- DOWN ARROW --- */
+                if (history_idx < history_count) {
+                    while (cmd_len > 0) { vga_putchar('\b'); cmd_len--; }
+                    history_idx++;
+                    if (history_idx == history_count) {
+                        cmd_buf[0] = '\0';
+                        cmd_len = 0;
+                    } else {
+                        k_strcpy(cmd_buf, history[history_idx % HISTORY_MAX]);
+                        cmd_len = k_strlen(cmd_buf);
+                        vga_puts(cmd_buf);
+                    }
+                }
+            } else if (c >= 32 && c <= 126 && cmd_len < CMD_BUF_SIZE - 1) {
                 cmd_buf[cmd_len++] = c;
                 vga_putchar(c);
             }
