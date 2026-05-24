@@ -1,0 +1,1221 @@
+================================================================================
+  MyOS — COMPLETE LINE-BY-LINE CODE EXPLANATION
+  Every file, every line, every concept explained in full detail.
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+  A. How a PC Boots (background required to understand everything else)
+  B. boot.asm — Bootloader explained line by line
+  C. linker.ld — Linker script explained line by line
+  D. kernel.c  — Kernel explained section by section, line by line
+  E. Makefile  — Build system explained line by line
+  F. What to implement next (roadmap)
+  G. Graphics: how to switch to VESA/VBE framebuffer mode
+  H. Shell: building a real interactive shell
+  I. Keyboard & Mouse: full PS/2 driver
+  J. System commands: ls, cd, cat and friends
+  K. Running everything with QEMU
+
+================================================================================
+  A. HOW A PC BOOTS (Essential Background)
+================================================================================
+
+When you press the power button on an x86 PC, the following sequence happens:
+
+1. The CPU resets and starts executing code at physical address 0xFFFFFFF0
+   (the very top of 32-bit address space), where the BIOS ROM is mapped.
+
+2. The BIOS (Basic Input/Output System) runs its POST (Power-On Self-Test):
+   it checks RAM, discovers hardware (keyboard, disks, video card) and sets up
+   a table of interrupt vectors in low memory (the IVT at address 0x0000).
+
+3. The BIOS looks for a bootable disk: it reads the very first 512-byte sector
+   (the MBR — Master Boot Record) from the disk into physical address 0x7C00,
+   checks that the last two bytes are 0x55 0xAA (the "boot signature"), and
+   jumps to 0x7C00.
+
+4. The CPU at this point is in REAL MODE (16-bit). Only the first 1 MB of RAM
+   is directly accessible and BIOS interrupts are available.
+
+5. Our bootloader (boot.asm) runs from 0x7C00. It loads the kernel from disk,
+   switches the CPU to PROTECTED MODE (32-bit, full 4 GB address space), and
+   jumps to the kernel entry point at physical address 0x10000.
+
+6. Our kernel (kernel.c / kernel_main()) takes over. The BIOS is no longer
+   available. The kernel must manage everything itself.
+
+Key memory map at boot time:
+  0x0000 – 0x003FF   Real-mode IVT (Interrupt Vector Table)
+  0x0400 – 0x004FF   BIOS Data Area
+  0x7C00 – 0x7DFF   Bootloader (512 bytes, us!)
+  0x10000 –          Kernel code (us, loaded here by bootloader)
+  0xA0000 – 0xBFFFF  Video memory (VGA)
+  0xB8000 –          VGA text-mode framebuffer
+  0xC0000 – 0xFFFFF  BIOS ROMs
+
+================================================================================
+  B. BOOT.ASM — LINE BY LINE
+================================================================================
+
+[BITS 16]
+  Tells NASM to emit 16-bit machine code. The CPU starts in real mode (16-bit).
+
+[ORG 0x7C00]
+  Tells NASM that the code will be loaded at physical address 0x7C00.
+  This makes all label addresses correct relative to that base.
+
+start:
+  The entry point label. Execution begins here after the BIOS jumps to 0x7C00.
+
+    cli
+  "Clear Interrupt Flag" — disables maskable hardware interrupts while we set
+  up the stack. Without this, an interrupt could fire before the stack pointer
+  is valid, causing a crash.
+
+    xor ax, ax
+  Sets AX = 0 (faster/smaller than "mov ax, 0" and sets the Zero Flag).
+
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+  In real mode, memory addresses are formed as (segment × 16 + offset).
+  Setting DS (Data Segment), ES (Extra Segment) and SS (Stack Segment) all to
+  zero means we use a "flat" model where segment × 16 = 0, so effective
+  addresses equal their offsets. This avoids unexpected aliasing bugs.
+
+    mov sp, 0x7C00
+  Sets the Stack Pointer to 0x7C00. The stack grows DOWNWARD, so the first
+  PUSH will write to 0x7BFE, safely below the bootloader. The stack won't
+  collide with us until it gets very large.
+
+    sti
+  "Set Interrupt Flag" — re-enable interrupts. The stack is now valid, so
+  BIOS interrupt service routines are safe to call.
+
+    mov [boot_drive], dl
+  When the BIOS calls our bootloader it puts the drive number (0x00 = floppy,
+  0x80 = first hard disk) in DL. We save it to the variable boot_drive so we
+  can use it later when reading more sectors.
+
+    mov si, msg_loading
+    call print_string
+  Load the address of our "Loading kernel..." string into SI (Source Index),
+  then call our print routine. SI is the pointer register used by LODSB.
+
+    mov ax, 0x1000
+    mov es, ax
+    xor bx, bx
+  Set up the destination for the disk read: ES:BX = 0x1000:0x0000.
+  In real-mode segmentation this resolves to physical address 0x10000.
+  This is exactly where our kernel will be loaded and where the linker script
+  places it.
+
+    mov ah, 0x02
+  BIOS INT 0x13 function 0x02 = "Read Sectors From Drive".
+
+    mov al, 16
+  Read 16 sectors = 16 × 512 = 8192 bytes. That's plenty for our kernel.
+  If your kernel grows, increase this number (max ~63 for a floppy layout).
+
+    mov ch, 0
+  Cylinder 0 (the first cylinder on the disk).
+
+    mov cl, 2
+  Starting sector 2 (sectors are 1-indexed; sector 1 is the boot sector itself).
+
+    mov dh, 0
+  Head 0 (the first read/write head).
+
+    mov dl, [boot_drive]
+  The drive number we saved earlier.
+
+    int 0x13
+  Call the BIOS disk interrupt. On return: CF (Carry Flag) is set on error.
+
+    jc disk_error
+  "Jump if Carry" — if the read failed, jump to our error handler.
+
+    cli
+  Disable interrupts again before entering protected mode. Real-mode BIOS ISRs
+  are not valid in protected mode; we must not let them fire during the switch.
+
+    lgdt [gdt_descriptor]
+  "Load Global Descriptor Table Register" — tells the CPU where our GDT is.
+  The GDTR register is 6 bytes: 2-byte limit + 4-byte base address.
+
+    mov eax, cr0
+    or eax, 0x1
+    mov cr0, eax
+  CR0 bit 0 is the Protection Enable (PE) bit. Setting it switches the CPU from
+  real mode to protected mode. We must immediately do a far jump to flush the
+  instruction pipeline (the CPU may have pre-fetched real-mode instructions).
+
+    jmp 0x08:protected_mode_start
+  A FAR JUMP to segment 0x08 (code segment selector in the GDT), offset
+  protected_mode_start. The CPU loads CS with 0x08 and reloads the instruction
+  pipeline with 32-bit protected-mode decoding. From this point forward we are
+  in 32-bit protected mode.
+
+--- print_string subroutine ---
+
+print_string:
+    pusha
+  Save all general-purpose registers to the stack. PUSHA pushes AX, CX, DX,
+  BX, SP, BP, SI, DI in that order.
+
+.loop:
+    lodsb
+  "Load String Byte" — loads the byte at [DS:SI] into AL and increments SI.
+  This auto-advances the pointer through our string.
+
+    or al, al
+  Bitwise OR of AL with itself. This doesn't change the value but sets the
+  Zero Flag if AL == 0 (which is our NUL terminator).
+
+    jz .done
+  If AL was 0 (end of string), jump to .done.
+
+    mov ah, 0x0E
+  BIOS INT 0x10 function 0x0E = "Teletype Output" (write one character).
+
+    mov bh, 0x00
+  Page 0 (the current display page, usually page 0).
+
+    mov bl, 0x07
+  Foreground colour attribute (light grey on black) in some BIOS implementations.
+
+    int 0x10
+  Call BIOS video interrupt to print the character in AL.
+
+    jmp .loop
+  Repeat for the next character.
+
+.done:
+    popa
+  Restore all registers we saved with PUSHA.
+
+    ret
+  Return to the caller.
+
+--- GDT (Global Descriptor Table) ---
+
+The GDT defines memory segments for protected mode. Each entry (descriptor)
+is 8 bytes and describes a segment's base address, limit, and attributes.
+
+gdt_null:
+    dd 0x00000000
+    dd 0x00000000
+  The FIRST entry in the GDT must always be a null descriptor (all zeros).
+  This is a CPU requirement. Any segment selector of 0 is "null" and triggers
+  a General Protection Fault if used to access memory.
+
+gdt_code:
+    dw 0xFFFF      — Segment Limit bits 15:0 (= 0xFFFFF with granularity = 4KB pages → 4 GB)
+    dw 0x0000      — Base Address bits 15:0 = 0
+    db 0x00        — Base bits 23:16 = 0
+    db 10011010b   — Access byte:
+                        Bit 7 (P)     = 1, segment is Present in memory
+                        Bits 6-5 (DPL) = 00, privilege level 0 (kernel)
+                        Bit 4 (S)     = 1, code/data segment (not system)
+                        Bit 3 (E)     = 1, Executable (this is CODE)
+                        Bit 2 (DC)    = 0, grows upward / not conforming
+                        Bit 1 (RW)    = 1, readable
+                        Bit 0 (A)     = 0, not accessed yet
+    db 11001111b   — Flags + Limit bits 19:16:
+                        Bit 7 (G)   = 1, Granularity = 4KB pages
+                        Bit 6 (DB)  = 1, 32-bit segment (use 32-bit offsets)
+                        Bit 5 (L)   = 0, not 64-bit
+                        Bit 4       = 0, reserved
+                        Bits 3:0    = 0xF (upper 4 bits of limit = 0xFFFFF total)
+    db 0x00        — Base bits 31:24 = 0
+
+gdt_data:
+  Same as code segment EXCEPT:
+    db 10010010b   — Bit 3 (E) = 0, this is DATA (not executable)
+                     Bit 1 (RW)= 1, writable
+
+gdt_descriptor:
+    dw gdt_end - gdt_start - 1   — Limit: size of GDT minus 1
+    dd gdt_start                  — Base: address of GDT
+
+CODE_SEG equ gdt_code - gdt_start   → 0x08 (code descriptor is 8 bytes in)
+DATA_SEG equ gdt_data - gdt_start   → 0x10 (data descriptor is 16 bytes in)
+
+--- Protected mode entry ---
+
+[BITS 32]
+  From here NASM emits 32-bit code.
+
+protected_mode_start:
+    mov ax, DATA_SEG  (= 0x10)
+    mov ds, ax  ...   — Load all data segment registers with the data selector
+    mov ebp, 0x90000
+    mov esp, ebp      — Stack now at 0x90000, growing downward into safe RAM
+
+    call 0x10000      — Far call to the kernel at physical address 0x10000.
+                        This is where the bootloader loaded kernel.bin.
+
+    hlt               — If kernel_main() returns (it shouldn't), halt.
+
+times 510-($-$$) db 0
+  Pad the sector to 510 bytes with zeros.
+
+dw 0xAA55
+  The boot signature. The BIOS checks that bytes 510-511 of the MBR are
+  0x55 0xAA (little-endian stores 0xAA55 as 55 AA). If absent, the BIOS
+  won't treat this as a bootable disk.
+
+================================================================================
+  C. LINKER.LD — LINE BY LINE
+================================================================================
+
+ENTRY(kernel_main)
+  Tells the linker that kernel_main is the first symbol to execute.
+  This sets the ELF "entry point" field. When we objcopy to binary, this
+  just ensures the symbol is not stripped.
+
+SECTIONS {
+  Begin the section layout description.
+
+    . = 0x10000;
+  The location counter (.) specifies the Virtual Memory Address (VMA) of
+  each section. We start at 0x10000 because that's where boot.asm jumps after
+  loading kernel.bin at 0x10000. The bootloader's `call 0x10000` must match
+  this address. Every absolute address inside the kernel (e.g., the VGA buffer
+  address 0xB8000) assumes physical addresses equal VMAs, which is true because
+  we haven't enabled paging.
+
+    .text : { *(.text) }
+  Collect all .text sections (compiled code) from all object files into one
+  contiguous output section. kernel_main() is in .text.
+
+    .rodata : { *(.rodata) }
+  Read-only data: string literals, const globals, switch-statement jump tables.
+  Our exception name strings are here.
+
+    .data : { *(.data) }
+  Initialised global/static variables. Our vga_buf pointer and term_attr byte
+  live here.
+
+    .bss : { *(.bss) *(COMMON) }
+  Uninitialised or zero-initialised globals. The IDT array (idt[256]) lives
+  here. The bootloader does NOT zero .bss for us; we do it with k_memset in
+  idt_install().
+
+================================================================================
+  D. KERNEL.C — SECTION BY SECTION, LINE BY LINE
+================================================================================
+
+------------------------------------------------------------------------
+SECTION 0: TYPE DEFINITIONS
+------------------------------------------------------------------------
+
+typedef unsigned char      uint8_t;
+typedef unsigned short     uint16_t;
+typedef unsigned int       uint32_t;
+typedef unsigned long long uint64_t;
+  We have no <stdint.h> (no standard library in freestanding mode), so we
+  define exact-width integer types ourselves. On IA-32: char=8-bit,
+  short=16-bit, int=32-bit, long long=64-bit.
+
+typedef uint32_t size_t;
+  size_t is the type for sizes/counts. On a 32-bit system it's 32 bits.
+
+#define NULL ((void*)0)
+  The null pointer constant. Casting 0 to void* makes it a generic pointer.
+
+------------------------------------------------------------------------
+SECTION 1: PORT I/O HELPERS
+------------------------------------------------------------------------
+
+The x86 architecture has a separate "I/O address space" distinct from memory.
+You access it with the IN and OUT instructions. BIOS and early kernel drivers
+(PIC, PIT, keyboard, VGA) communicate with hardware through I/O ports.
+
+static inline void outb(uint16_t port, uint8_t value) {
+    __asm__ volatile ("outb %1, %0" : : "dN"(port), "a"(value));
+}
+
+  __asm__ volatile(...)
+    Inline assembly. "volatile" means: do not optimise this away, do not
+    move it, always execute it.
+
+  "outb %1, %0"
+    The OUT instruction writes a byte to a port. AT&T syntax puts the
+    destination second: "outb value, port". %0 = first constraint (port),
+    %1 = second constraint (value).
+
+  "dN"(port)
+    Constraint "dN": use the DX register ("d") or, if port is a compile-time
+    constant 0–255, use an immediate ("N"). The OUT instruction requires the
+    port in DX for port numbers > 255.
+
+  "a"(value)
+    Constraint "a": put value into the AL register (accumulator low byte).
+    The OUT instruction always reads from AL/AX/EAX.
+
+static inline uint8_t inb(uint16_t port) {
+    uint8_t ret;
+    __asm__ volatile ("inb %1, %0" : "=a"(ret) : "dN"(port));
+    return ret;
+}
+  The IN instruction reads from a port into AL. "=a"(ret) means: write the
+  result from AL into the C variable 'ret'.
+
+static inline void io_wait(void) {
+    outb(0x80, 0);
+}
+  Port 0x80 is the "POST diagnostic port" — writing to it is a harmless no-op
+  that takes ~1–4 microseconds. This gives slow hardware (the old 8259A PIC)
+  time to process a command before we send the next one.
+
+------------------------------------------------------------------------
+SECTION 2: VGA TEXT-MODE DRIVER
+------------------------------------------------------------------------
+
+#define VGA_ADDRESS  0xB8000
+  The VGA text-mode framebuffer is memory-mapped at physical address 0xB8000.
+  Writing 16-bit values here changes what appears on screen.
+  This works because our linker/bootloader doesn't use paging, so
+  virtual addresses equal physical addresses.
+
+#define VGA_COLS  80
+#define VGA_ROWS  25
+  Standard VGA text mode: 80 columns, 25 rows = 2000 character cells.
+  Each cell = 2 bytes → total buffer = 4000 bytes.
+
+typedef enum { VGA_BLACK = 0, ... VGA_WHITE = 15 } vga_color_t;
+  VGA text mode supports 16 foreground colours and 8 background colours
+  (bits 3-0 = foreground, bits 6-4 = background, bit 7 = blink on some systems).
+
+static inline uint8_t vga_attr(vga_color_t fg, vga_color_t bg) {
+    return (uint8_t)((bg << 4) | fg);
+}
+  Pack the 4-bit background into the high nibble and 4-bit foreground into
+  the low nibble of one byte.
+
+static inline uint16_t vga_cell(char c, uint8_t attr) {
+    return (uint16_t)((uint16_t)attr << 8 | (uint8_t)c);
+}
+  The VGA cell format: low byte = ASCII character, high byte = attribute.
+  Note this is LITTLE-ENDIAN: in memory it's stored as [char, attr].
+
+static uint16_t *vga_buf = (uint16_t *)VGA_ADDRESS;
+  We declare a pointer directly to the hardware framebuffer. Writing
+  vga_buf[row * 80 + col] = cell changes what's visible at that position.
+
+void vga_update_cursor(void) {
+    uint16_t pos = (uint16_t)(term_row * VGA_COLS + term_col);
+    outb(0x3D4, 0x0F);   — Select CRTC register 0x0F (cursor location low)
+    outb(0x3D5, (uint8_t)(pos & 0xFF));          — Write low byte
+    outb(0x3D4, 0x0E);   — Select CRTC register 0x0E (cursor location high)
+    outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));   — Write high byte
+}
+  The CRT Controller (CRTC) is programmed through an index/data port pair.
+  Write the register number to 0x3D4, then the value to 0x3D5.
+  Registers 0x0E and 0x0F hold the 16-bit cursor position (row*80+col).
+  Without this, the hardware cursor doesn't move.
+
+static void vga_scroll(void) {
+    for (int r = 1; r < VGA_ROWS; r++)
+        for (int c = 0; c < VGA_COLS; c++)
+            vga_buf[(r-1)*VGA_COLS + c] = vga_buf[r*VGA_COLS + c];
+  Copy every row one row upward (memmove-style).
+
+    for (int c = 0; c < VGA_COLS; c++)
+        vga_buf[(VGA_ROWS-1)*VGA_COLS + c] = vga_cell(' ', term_attr);
+  Fill the newly vacated bottom row with spaces.
+
+    term_row = VGA_ROWS - 1;
+  Keep the cursor on the last row.
+}
+
+void vga_putchar(char c) {
+  Handles four special cases:
+    '\n' — newline: go to column 0 of the next row
+    '\r' — carriage return: go to column 0 (same row)
+    '\b' — backspace: move one column left and erase
+    other — write the character cell, advance column
+
+  After placing the character, if column overflows 80, wrap to next row.
+  If row overflows 25, call vga_scroll().
+  Always call vga_update_cursor() so the hardware cursor stays in sync.
+}
+
+------------------------------------------------------------------------
+SECTION 3: STRING / NUMBER UTILITIES
+------------------------------------------------------------------------
+
+We have no libc, so we implement the minimal subset we need.
+
+k_strlen  — iterate until NUL, count characters.
+k_strcmp  — compare two strings character by character; return 0 if equal.
+k_strncmp — same but stop after n characters (used for prefix matching).
+k_strcpy  — copy src into dst until NUL.
+
+void k_itoa(uint32_t val, char *buf) {
+  Convert an unsigned integer to a decimal string.
+  Build the digits in reverse (via modulo 10), store in a temporary array,
+  then reverse into the output buffer.
+
+void *k_memset(void *dst, int c, size_t n) {
+  Fill n bytes of dst with byte c. Used to zero the IDT array.
+
+------------------------------------------------------------------------
+SECTION 4: GDT (COMMENT ONLY)
+------------------------------------------------------------------------
+
+The GDT was set up by boot.asm. The kernel doesn't need to recreate it —
+the GDTR register still points to it. We just need to know the selectors:
+  0x08 = code segment (passed to idt_set_gate as the 'selector' argument)
+  0x10 = data segment (loaded into DS/ES/SS inside ISR stubs)
+
+------------------------------------------------------------------------
+SECTION 5: INTERRUPT DESCRIPTOR TABLE (IDT)
+------------------------------------------------------------------------
+
+The IDT is the protected-mode equivalent of the real-mode IVT.
+When an interrupt or exception fires, the CPU:
+  1. Reads the 8-byte IDT entry for that vector number.
+  2. Jumps to the address stored in (offset_hi << 16 | offset_lo),
+     using the code segment in 'selector'.
+  3. Saves EFLAGS, CS, EIP (and possibly an error code) on the stack.
+
+typedef struct __attribute__((packed)) {
+    uint16_t offset_lo;   — ISR address bits [15:0]
+    uint16_t selector;    — Must be our code segment = 0x08
+    uint8_t  zero;        — Reserved, must be 0
+    uint8_t  type_attr;   — 0x8E = 1000_1110b
+                              bit 7 (P)    = 1, gate is present
+                              bits 6-5 (DPL) = 00, ring 0 only
+                              bit 4        = 0, not a storage segment
+                              bits 3-0     = 1110, 32-bit interrupt gate
+                              (an interrupt gate clears IF automatically)
+    uint16_t offset_hi;   — ISR address bits [31:16]
+} idt_entry_t;
+
+  __attribute__((packed)) tells GCC to not add any padding bytes between
+  struct fields. Hardware structures must match exact byte layouts.
+
+typedef struct __attribute__((packed)) {
+    uint16_t limit;   — Size of IDT in bytes minus 1 (256×8 - 1 = 2047)
+    uint32_t base;    — Physical address of idt[] array
+} idt_ptr_t;
+
+static void idt_set_gate(uint8_t num, uint32_t handler, ...) {
+    idt[num].offset_lo = handler & 0xFFFF;
+    idt[num].selector  = selector;          — 0x08 always
+    idt[num].zero      = 0;
+    idt[num].type_attr = flags;             — 0x8E always
+    idt[num].offset_hi = (handler >> 16) & 0xFFFF;
+}
+  Split the 32-bit ISR function address across two 16-bit fields in the gate.
+
+------------------------------------------------------------------------
+SECTION 6: INTERRUPT SERVICE ROUTINE (ISR) STUBS
+------------------------------------------------------------------------
+
+registers_t — this struct represents the stack frame created by our ISR stub.
+When the CPU takes an interrupt, it automatically pushes:
+  [ESP-4]  SS      (only for privilege-level change, not our case)
+  [ESP-8]  ESP     (only for privilege-level change)
+  [ESP-12] EFLAGS
+  [ESP-16] CS
+  [ESP-20] EIP
+  [ESP-24] Error code (only for exceptions 8, 10-14, 17, 30)
+
+Our stub then pushes (from top of struct to bottom):
+  int_no   — we push this (exception number or IRQ vector)
+  err_code — we push 0 for exceptions that don't have a real error code
+  pusha    — pushes EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
+  DS       — we save the current data segment selector
+
+typedef struct __attribute__((packed)) {
+    uint32_t ds;                           — saved data segment
+    uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax;  — from PUSHA
+    uint32_t int_no, err_code;             — our pushes
+    uint32_t eip, cs, eflags, useresp, ss;— CPU auto-push
+} registers_t;
+
+void isr_handler(registers_t *regs) {
+  Called by exception stubs. Prints the exception name and halts.
+  In a real OS you would try to handle the fault (e.g., page faults for
+  demand paging), kill the offending process, and return.
+
+------------------------------------------------------------------------
+SECTION 7: PIC — PROGRAMMABLE INTERRUPT CONTROLLER
+------------------------------------------------------------------------
+
+The PC has two cascaded 8259A PIC chips:
+  Master PIC: handles IRQ0-IRQ7 (timer, keyboard, serial, etc.)
+  Slave  PIC: handles IRQ8-IRQ15 (RTC, PS/2 mouse, FPU, etc.)
+              connected to the master on IRQ2
+
+Default IRQ vector assignments (WRONG for protected mode):
+  IRQ0-IRQ7  → INT 0x08-0x0F  ← CLASH with CPU exceptions 8-15!
+  IRQ8-IRQ15 → INT 0x70-0x77
+
+We remap them to:
+  IRQ0-IRQ7  → INT 0x20-0x27  (decimal 32-39)
+  IRQ8-IRQ15 → INT 0x28-0x2F  (decimal 40-47)
+
+pic_remap():
+  uint8_t a1 = inb(PIC1_DATA);
+  uint8_t a2 = inb(PIC2_DATA);
+  Save current IRQ mask registers. We'll restore them after init.
+
+  outb(PIC1_CMD, 0x11); — ICW1: start init sequence, cascade mode, expect ICW4
+  outb(PIC2_CMD, 0x11);
+
+  outb(PIC1_DATA, 0x20); — ICW2: master offset → vector 0x20 (= 32)
+  outb(PIC2_DATA, 0x28); — ICW2: slave  offset → vector 0x28 (= 40)
+
+  outb(PIC1_DATA, 4);   — ICW3 master: slave is connected on IRQ2 (bit 2 = 4)
+  outb(PIC2_DATA, 2);   — ICW3 slave: cascade identity = 2
+
+  outb(PIC1_DATA, 0x01); — ICW4: 8086 mode (not MCS-80 mode)
+  outb(PIC2_DATA, 0x01);
+
+  Restore masks.
+
+pic_eoi(irq):
+  After handling an IRQ, we must send the EOI (End of Interrupt) command
+  (0x20) to the PIC so it will fire further interrupts of that type.
+  For IRQs 8-15 (slave), we must send EOI to BOTH master and slave
+  because the slave is chained through master IRQ2.
+
+------------------------------------------------------------------------
+SECTION 8: TIMER (IRQ 0)
+------------------------------------------------------------------------
+
+static volatile uint32_t timer_ticks = 0;
+  'volatile' is critical: this variable is modified inside an interrupt
+  handler and read in normal code. Without volatile, the compiler might
+  cache it in a register and never re-read it from memory.
+
+void irq_handler_timer(void) {
+    timer_ticks++;
+    pic_eoi(0);
+}
+  The PIT (Programmable Interval Timer, Intel 8253/8254) fires IRQ0 at
+  ~18.2 Hz by default. Every time it fires, we increment our tick counter.
+  We must call pic_eoi(0) or the PIC will never fire another timer interrupt.
+
+uint32_t uptime_seconds(void) {
+    return timer_ticks / 18;
+}
+  ~18.2 ticks per second, so dividing by 18 gives approximate seconds.
+  For accuracy, configure the PIT to exactly 100 Hz (10 ms/tick) and
+  divide by 100.
+
+------------------------------------------------------------------------
+SECTION 9: KEYBOARD (IRQ 1) — PS/2 SCANCODE SET 1
+------------------------------------------------------------------------
+
+#define KB_DATA 0x60
+  The PS/2 keyboard controller data port. Reading it gives a scancode.
+
+static const char kb_map[128] = { ... }
+  This is a lookup table: index = scancode, value = ASCII character.
+  Scancodes are hardware codes from the keyboard matrix, NOT ASCII.
+  E.g., scancode 0x1E = the 'A' key → maps to 'a' (lowercase).
+  A 0 in the table means "no printable character" (e.g., F-keys, ctrl).
+
+static const char kb_map_shift[128] = { ... }
+  Same table but for when Shift is held. 'a' → 'A', '1' → '!', etc.
+
+Ring buffer (circular queue):
+  Hardware interrupts can fire at any time. If the main code is busy
+  (e.g., waiting for something), we can't call vga_putchar() directly from
+  the ISR safely. Instead:
+    - The ISR writes to kb_buf[kb_head] and advances kb_head.
+    - The shell reads from kb_buf[kb_tail] and advances kb_tail.
+    - If head == tail, the buffer is empty (no characters available).
+    - If (head+1) % SIZE == tail, the buffer is full (drop the character).
+  This is a standard lock-free single-producer/single-consumer ring buffer.
+
+void irq_handler_keyboard(void) {
+    uint8_t scancode = inb(KB_DATA);
+  Read the scancode from the keyboard data port. Must be done inside the ISR
+  before sending EOI, otherwise the keyboard controller may discard it.
+
+    if (scancode == 0x2A || scancode == 0x36) { kb_shift = 1; }
+    else if (scancode == 0xAA || scancode == 0xB6) { kb_shift = 0; }
+  Scancodes 0x2A (left shift) and 0x36 (right shift) are "make" codes (key
+  pressed). 0xAA and 0xB6 are the corresponding "break" codes (key released,
+  = make code | 0x80). We track shift state for capital letters / symbols.
+
+    else if (!(scancode & 0x80)) {
+  Bit 7 of a scancode = 1 means key released (break code). We only process
+  key-pressed events (bit 7 = 0).
+
+        char c = kb_shift ? kb_map_shift[scancode] : kb_map[scancode];
+        if (c) kb_buf_push(c);
+  Look up the ASCII value and push to the ring buffer if non-zero.
+
+char kb_getchar(void) {
+    while (kb_head == kb_tail)
+        __asm__ volatile ("hlt");
+  "hlt" halts the CPU until the next interrupt fires. This is power-efficient:
+  instead of a busy-spin consuming 100% CPU, we sleep until the keyboard ISR
+  wakes us by updating kb_head.
+
+------------------------------------------------------------------------
+SECTION 10: IRQ DISPATCH
+------------------------------------------------------------------------
+
+void irq_handler(registers_t *regs) {
+    switch (regs->int_no - 32) {
+  IRQ stubs push the vector number (32 for IRQ0, 33 for IRQ1, etc.) as int_no.
+  Subtracting 32 gives the actual IRQ number (0 for timer, 1 for keyboard).
+
+        case 0:  irq_handler_timer();    break;
+        case 1:  irq_handler_keyboard(); break;
+        default: pic_eoi(...); break;
+  Unhandled IRQs still need an EOI sent or the PIC will be permanently blocked.
+
+------------------------------------------------------------------------
+SECTION 11: ISR/IRQ STUB MACROS
+------------------------------------------------------------------------
+
+__attribute__((naked)) void isr0(void) { ... }
+  A "naked" function has NO function prologue or epilogue generated by the
+  compiler (no push ebp; mov ebp, esp; etc.). We control the stack frame
+  entirely with inline assembly. This is required because we need a VERY
+  specific stack layout before calling our C handler.
+
+The STUB_ISR_NOERR macro:
+  "cli\n"           — disable interrupts (should already be off, but safe)
+  "push $0\n"       — push a FAKE error code (0) to unify the stack layout
+                      with exceptions that DO have real error codes
+  "push $" #n "\n"  — push the interrupt/exception number
+  "pusha\n"         — push all 8 general-purpose registers
+  "mov %%ds, %%ax\n"
+  "push %%eax\n"    — save the current Data Segment register
+  "mov $0x10, %%ax\n"
+  "mov %%ax, %%ds\n"
+  ...               — reload all segment registers with the kernel's data
+                      selector (0x10). This is necessary because the selector
+                      in DS when the interrupt fires could be anything (e.g.,
+                      a user-mode selector in a future multitasking OS).
+  "mov %%esp, %%eax\n"
+  "push %%eax\n"    — push the stack pointer itself as the argument to isr_handler.
+                      isr_handler takes a registers_t* — ESP currently points
+                      to the top of the register save area, which IS a registers_t.
+  "call isr_handler\n"  — call the C handler
+  "pop %%eax\n"     — pop the ESP argument we pushed
+  "pop %%eax\n"     — pop the saved DS value into EAX...
+  "mov %%ax, %%ds\n"
+  ...               — ...then restore segment registers
+  "popa\n"          — restore all 8 general-purpose registers
+  "add $8, %%esp\n" — discard int_no and err_code from the stack
+  "iret\n"          — Interrupt RETurn: pops EIP, CS, EFLAGS (and possibly
+                      ESP, SS for privilege change). Resumes interrupted code.
+
+The STUB_ISR_ERR macro is identical EXCEPT it does NOT push a fake error code,
+because the CPU has already pushed a real one for exceptions like page fault (#14)
+and double fault (#8).
+
+The STUB_IRQ macro is like NOERR (always pushes a fake error code = 0 because
+hardware IRQs never provide a real error code) but calls irq_handler instead.
+
+------------------------------------------------------------------------
+SECTION 12: IDT INSTALLATION
+------------------------------------------------------------------------
+
+static void idt_install(void) {
+    idt_ptr.limit = sizeof(idt) - 1;
+    idt_ptr.base  = (uint32_t)&idt;
+  Set up the 6-byte IDTR value.
+
+    k_memset(&idt, 0, sizeof(idt));
+  Zero the entire 256-entry IDT. Uninstalled entries have type_attr=0,
+  meaning the Present bit is clear, so the CPU will generate a double fault
+  if those vectors are triggered (better than jumping to garbage code).
+
+    idt_set_gate(0,  (uint32_t)isr0,  0x08, 0x8E);
+  ...
+  Install one gate per exception/IRQ. We cast the function pointer to uint32_t
+  to extract the 32-bit address.
+
+    __asm__ volatile ("lidt %0" : : "m"(idt_ptr));
+  "m" constraint: pass idt_ptr as a memory reference.
+  LIDT loads the 6-byte value at that address into the IDTR register.
+  From this point on, any interrupt will be dispatched through our IDT.
+
+------------------------------------------------------------------------
+SECTION 13: BOOT SPLASH SCREEN
+------------------------------------------------------------------------
+
+draw_banner():
+  We write directly to the VGA buffer using vga_putchar_at(), which bypasses
+  the cursor and terminal state. This lets us draw anywhere on screen
+  without affecting where the shell cursor will start.
+
+  The banner consists of:
+  - A full blue background (all 2000 cells filled with spaces + blue attribute)
+  - Two yellow '=' separator lines (top and bottom borders)
+  - An 8-line ASCII-art logo drawn in light cyan
+  - A centered tagline in yellow
+  - Version info in white
+  - Feature flags in light green
+  - Red corner decorations
+  - A "Press any key" prompt in magenta
+
+delay_ticks(uint32_t ticks):
+  Uses the timer_ticks counter (updated by IRQ0) to spin-wait for a number
+  of ticks. We use "hlt" inside the loop to be CPU-friendly.
+
+------------------------------------------------------------------------
+SECTION 14: SHELL
+------------------------------------------------------------------------
+
+shell_prompt():
+  Prints a colored prompt: "myos@kernel:~$ "
+  Each piece ("myos", "@kernel", ":~$ ") uses a different color.
+
+Reading a line:
+  while (1) {
+      char c = kb_getchar();       — blocking read from ring buffer
+      if (c == '\n') { ... break } — Enter key
+      else if (c == '\b') { ... }  — Backspace: remove last char from buffer
+      else { cmd_buf[cmd_len++] = c; vga_putchar(c); }  — echo to screen
+  }
+  This is "line editing" — the user can backspace before pressing Enter.
+  Professional shells (readline) also support arrow keys, history, completion.
+
+Command dispatch:
+  if (k_strcmp(cmd_buf, "help") == 0) cmd_help();
+  Simple string comparison against known command names.
+
+  k_strncmp(cmd_buf, "echo", 4) == 0 && (cmd_buf[4] == ' ' || cmd_buf[4] == '\0')
+  For "echo" we check only the first 4 bytes plus that the next char is a
+  space or NUL, so "echoing" doesn't accidentally match.
+
+cmd_reboot():
+  outb(0x64, 0xFE)
+  Port 0x64 is the PS/2 controller command port. Sending 0xFE pulses the
+  CPU RESET line, causing a hardware reset equivalent to pressing the reset
+  button. This is the cleanest software-reset method on x86.
+
+------------------------------------------------------------------------
+SECTION 15: KERNEL ENTRY POINT
+------------------------------------------------------------------------
+
+void kernel_main(void) {
+    pic_remap();
+  MUST be first: remaps IRQs before enabling interrupts, so hardware IRQs
+  don't fire on exception vectors.
+
+    idt_install();
+  Fills all 256 IDT gates and loads the IDTR. After this the CPU knows where
+  all ISRs are.
+
+    __asm__ volatile ("sti");
+  Set Interrupt Flag. From this moment hardware interrupts are live.
+  The timer starts ticking and the keyboard starts generating events.
+
+    draw_banner();
+    delay_ticks(18 * 2);
+    kb_getchar();
+  Show the splash for 2 seconds OR until a key is pressed.
+
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    vga_clear();
+  Wipe the screen for the shell.
+
+    shell_run();
+  The shell's while(1) loop — this function never returns.
+
+    __asm__ volatile ("cli; hlt");
+  Safety net: if somehow shell_run() returns, halt.
+}
+
+================================================================================
+  E. MAKEFILE — LINE BY LINE
+================================================================================
+
+ASM = nasm
+  NASM (Netwide Assembler) to assemble boot.asm.
+
+UNAME := $(shell uname -s)
+  := is immediate assignment — evaluate the shell command now.
+  uname -s returns "Linux", "Darwin" (macOS), etc.
+
+ifeq ($(UNAME), Darwin) ... else ... endif
+  On macOS, native GCC targets the host (x86_64 Mach-O). We need a
+  cross-compiler that targets i386-elf. The x86_64-elf- toolchain works
+  for 32-bit targets with -m32.
+  On Linux, the native gcc/ld can produce elf_i386 output with -m32.
+
+CFLAGS = -m32 -ffreestanding -fno-stack-protector -nostdlib -O2 -Wall -Wextra -std=c11
+  -m32              : Generate IA-32 (32-bit x86) machine code
+  -ffreestanding    : Tell GCC not to assume a hosted environment. Disables
+                      implicit inclusion of standard headers. Allows use of
+                      __asm__, removes assumptions about main() etc.
+  -fno-stack-protector : Disable the stack canary. The canary needs __stack_chk_fail
+                      which lives in libc — which we don't have.
+  -nostdlib         : Don't link any standard libraries (no libc, no libgcc startup).
+  -O2               : Optimisation level 2. Also needed for naked functions —
+                      without optimisation, GCC may add extra code.
+  -Wall -Wextra     : Enable most useful warnings.
+  -std=c11          : Use the C11 standard.
+
+$(BUILD_DIR)/kernel.o: $(SRC_DIR)/kernel.c | $(BUILD_DIR)
+  | $(BUILD_DIR) is an "order-only prerequisite": ensure the directory exists
+  before compiling but don't rebuild the .o if only the directory changes.
+
+$(CC) $(CFLAGS) -c $< -o $@
+  -c    : compile only, do not link
+  $<    : the first prerequisite (kernel.c)
+  $@    : the target (kernel.o)
+
+$(LD) -m elf_i386 -T $(SRC_DIR)/linker.ld -o $@ $<
+  -m elf_i386  : produce an ELF file for IA-32
+  -T linker.ld : use our custom linker script (section layout + load address)
+
+$(OBJCOPY) -O binary $< $@
+  Strip ELF headers and output raw binary. The bootloader uses BIOS disk reads
+  which load raw bytes — it cannot parse ELF. kernel.bin is exactly the bytes
+  that will appear in RAM at 0x10000.
+
+dd if=/dev/zero of=$@ bs=512 count=2880 2>/dev/null
+  Create a 1.44 MB floppy image (2880 × 512 = 1,474,560 bytes) filled with zeros.
+
+dd if=$(BUILD_DIR)/boot.bin of=$@ bs=512 count=1 conv=notrunc
+  Write the 512-byte boot sector to the VERY FIRST sector of the image.
+  conv=notrunc : do not truncate the output file after writing.
+
+dd if=$(BUILD_DIR)/kernel.bin of=$@ bs=512 seek=1 conv=notrunc
+  seek=1 : skip 1 block (512 bytes) before writing — start at sector 2.
+  This places the kernel immediately after the boot sector, which is exactly
+  where boot.asm reads from (starting at cylinder 0, head 0, sector 2).
+
+run: qemu-system-i386 -drive format=raw,file=$< -serial stdio
+  -drive format=raw : treat the file as a raw disk (not a disk image format)
+  -serial stdio     : connect the VM's serial port to your terminal.
+                      Useful for debug output via serial (port 0x3F8).
+
+================================================================================
+  F. WHAT TO IMPLEMENT NEXT (ROADMAP)
+================================================================================
+
+Here is a prioritized roadmap of features to add to MyOS, from easiest to hardest:
+
+BEGINNER (next steps):
+  1. PIT configuration — reprogram the 8253/8254 PIT to fire at a precise
+     frequency (e.g., 1000 Hz for 1ms ticks) using port 0x40-0x43.
+  2. k_printf — a simple printf-like function supporting %d, %x, %s, %c.
+     This makes debugging vastly easier.
+  3. More shell commands — time (show uptime), meminfo (show memory map).
+  4. Kernel heap — a simple bump allocator: keep a pointer to the next free
+     byte, advance it on malloc(), never free. This enables dynamic allocation.
+
+INTERMEDIATE:
+  5. Memory Management — parse the BIOS memory map (INT 0x15, EAX=0xE820
+     before entering protected mode), implement a physical page frame allocator
+     (bitmap or free-list), then paging (load CR3, set up page tables, enable
+     CR0.PG bit).
+  6. Filesystem — read a FAT12 filesystem from the floppy image. This lets
+     you store files and implement ls, cat, etc.
+  7. Multitasking (cooperative) — save/restore register state to switch between
+     tasks manually. Introduce a simple round-robin scheduler in the timer ISR.
+  8. System calls — add a software interrupt (INT 0x80) gate to the IDT.
+     User programs invoke it to request kernel services.
+  9. ELF loader — parse a simple statically-linked ELF binary and jump to it.
+
+ADVANCED:
+  10. Preemptive multitasking — switch tasks FROM the timer ISR using TSS.
+  11. Virtual memory per-process — each process gets its own page directory.
+  12. User mode (ring 3) — use IRET to drop to privilege level 3. System calls
+      via INT 0x80 switch back to ring 0.
+  13. ATA/IDE driver — real disk I/O (ports 0x1F0-0x1F7).
+  14. ext2 filesystem — read/write a proper Linux-compatible filesystem.
+  15. Network stack — RTL8139 / e1000 NIC driver + ARP + IP + TCP.
+  16. USB — UHCI/EHCI controller driver (very complex).
+
+================================================================================
+  G. GRAPHICS: VGA, VESA/VBE FRAMEBUFFER
+================================================================================
+
+HOW VGA TEXT MODE WORKS (what we use now):
+  - 80×25 grid of character cells at 0xB8000
+  - CPU writes 16-bit values (char + attribute)
+  - Hardware does font rendering automatically
+  - 16 foreground colors, 8 background colors
+  - Very fast, no driver complexity
+
+TO SWITCH TO GRAPHICS (pixel-based drawing):
+
+OPTION 1: VESA BIOS Extensions (VBE) — recommended for hobby OSes
+  VBE is a BIOS extension providing a standard way to switch to high-resolution
+  linear framebuffer modes (e.g., 800×600 or 1024×768 in 32-bit color).
+
+  IMPORTANT: You must call VBE BEFORE entering protected mode (while in the
+  bootloader, still in real mode), because VBE uses INT 0x10 BIOS calls.
+
+  Steps in boot.asm:
+    1. Set VBE mode: call INT 0x10, AX=0x4F02, BX=(mode | 0x4000)
+       Mode 0x118 = 1024×768×24bpp, 0x115 = 800×600×24bpp
+       Bit 14 (0x4000) in BX enables the Linear Framebuffer (LFB).
+
+    2. Query mode info: call INT 0x10, AX=0x4F01, CX=mode_number, ES:DI=buffer
+       This fills a 256-byte VbeModeInfo structure. Key fields:
+         uint32_t PhysBasePtr  — physical address of the framebuffer
+         uint16_t Pitch        — bytes per row (may be > width*bytes_per_pixel)
+         uint16_t XResolution  — width in pixels
+         uint16_t YResolution  — height in pixels
+         uint8_t  BitsPerPixel — 24 or 32
+
+    3. Save PhysBasePtr, Pitch, Width, Height somewhere (e.g., at 0x9000)
+       before jumping to protected mode, then read them in the kernel.
+
+  In kernel.c, drawing a pixel looks like:
+    uint8_t *fb = (uint8_t *)physBasePtr;
+    void put_pixel(int x, int y, uint32_t color) {
+        uint32_t offset = y * pitch + x * (bpp / 8);
+        fb[offset + 0] = color & 0xFF;        // Blue
+        fb[offset + 1] = (color >> 8) & 0xFF; // Green
+        fb[offset + 2] = (color >> 16) & 0xFF;// Red
+    }
+
+  From there you can draw:
+    - Rectangles: nested loops calling put_pixel
+    - Lines: Bresenham's line algorithm
+    - Text: embed a bitmap font (PSF format) and blit each glyph
+    - Images: embed raw RGB data in kernel binary
+
+OPTION 2: Direct VGA Mode 13h (320×200 at 256 colors)
+  This is the simplest graphics mode. In real mode, INT 0x10, AX=0x0013
+  switches to 320×200 with a palette of 256 colors. The framebuffer is at
+  0xA0000 (1 byte per pixel = color index). But 320×200 is very low
+  resolution and rarely worth the effort today.
+
+OPTION 3: Bochs VBE extensions (BGA)
+  QEMU emulates the Bochs Graphics Adapter. You can set resolution and bit
+  depth by writing to I/O ports 0x01CE (index) and 0x01CF (data) directly
+  from protected mode (no BIOS call needed). This is simpler for development
+  but won't work on real hardware.
+
+PSF BITMAP FONTS for VBE text:
+  Download a PC Screen Font (.psf) file (e.g., the Linux console fonts in
+  /usr/share/consolefonts/). Embed it as a byte array in kernel.c.
+  Each glyph is 16 rows × 8 bits. To draw character 'A' at (x,y):
+    for each row 0..15:
+      for each bit 0..7:
+        if (font_data['A'][row] & (1 << (7-bit)))
+          put_pixel(x+bit, y+row, FG_COLOR)
+        else
+          put_pixel(x+bit, y+row, BG_COLOR)
+
+================================================================================
+  H. SHELL: BUILDING A REAL INTERACTIVE SHELL
+================================================================================
+
+The shell in kernel.c is a minimal "read-eval-print loop" (REPL).
+Here's how to evolve it into something more capable:
+
+1. COMMAND HISTORY
+   Keep a circular array of the last N command strings.
+   On arrow-up/arrow-down (scancodes 0x48, 0x50), recall previous commands.
+   Erase the current line (backspace to column 0), print the historic command.
+
+2. TAB COMPLETION
+   On scancode 0x0F (Tab), look at the current partial input and find
+   commands that start with it. If exactly one match, complete it.
+   If multiple, print them as options (like bash).
+
+3. COMMAND ARGUMENTS (argc/argv parsing)
+   Split the input line on spaces into a tokens array:
+     char *argv[16]; int argc = 0;
+     char *p = cmd_buf;
+     while (*p) {
+         while (*p == ' ') p++;          // skip spaces
+         if (*p) argv[argc++] = p;       // start of token
+         while (*p && *p != ' ') p++;    // find end of token
+         if (*p) *p++ = '\0';            // NUL-terminate it
+     }
+   Now argv[0] is the command, argv[1..] are the arguments.
+
+4. PIPING AND REDIRECTION
+   These require a kernel buffer / virtual filesystem. True piping needs
+   multiple concurrent "processes" sharing a buffer — needs multitasking.
+
+5. ENVIRONMENT VARIABLES
+   A simple key-value store (array of "KEY=VALUE" strings). Implement
+   a get_env(name) and set_env(name, value) function. $PATH, $HOME, etc.
+
+================================================================================
+  I. KEYBOARD & MOUSE: FULL PS/2 DRIVER
+================================================================================
+
+KEYBOARD — improving the current driver:
+
+1. EXTENDED SCANCODES: Many keys (arrows, home, end, insert, delete, F5-F12,
+   numpad keys) send two bytes: 0xE0 followed by a second scancode. In
+   irq_handler_keyboard(), detect 0xE0 and set a flag. The next scancode is
+   the extended key. Build a separate table for extended keys.
+
+2. CAPS LOCK / NUM LOCK:
+   Track their state. Toggle on each make-code event for those keys.
+   Combine with shift state for correct character output.
+
+3. FULL SCAN CODE SET 2 (most modern keyboards default to set 2):
+   The PS/2 controller (8042) translates set 2 to set 1 by default.
+   You can disable translation by sending command 0xF0 then 0x01 to the
+   keyboard via port 0x60. Scancode Set 2 tables are widely documented.
+
+MOUSE — adding PS/2 mouse support:
+
+The PS/2 mouse is connected to the PS/2 controller's second port.
+
+1. ENABLE THE SECOND PORT:
+   Send command 0xA8 to PS/2 controller (port 0x64) to enable mouse port.
+   Send command 0xD4 then 0xF4 to activate mouse data streaming.
+   Send command 0x20 to read config byte, set bit 1, write back with 0x60.
+   This tells the PS/2 controller to send mouse data to IRQ12.
+
+2. IRQ12 HANDLER:
+   Install an IDT gate for vector 44 (IRQ12 = 32+12).
+   The mouse sends data in 3-byte packets:
+     Byte 0: status byte (button bits, overflow flags, sign bits)
+     Byte 1: X movement (signed, two's complement)
+     Byte 2: Y movement (signed, note Y is inverted vs screen coordinates)
+
+3. MOUSE CURSOR:
+   In text mode, draw a cursor by inverting the attribute byte of the cell
+   at the current mouse position (swap foreground and background colors).
+   In graphics mode, draw a small bitmap at (mouse_x, mouse_y) and
+   redraw the background when the mouse moves.
+
+4. MOUSE BUTTONS:
+   Byte 0, bit 0 = left button
+   Byte 0, bit 1 = right button
+   Byte 0, bit 2 = middle button
+
+================================================================================
+  J. SYSTEM COMMANDS: ls, cd, cat AND FRIENDS
+================================================================================
+
+These commands require a FILESYSTEM. Without one, you have nowhere to list,
+navigate, or read files from. Here's the minimum viable path:
+
+STEP 1: IMPLEMENT FAT12 FILESYSTEM READING
+
+FAT12 is the filesystem used on 1.44 MB floppy disks. It's the simplest
+real filesystem to implement.
+
+Structure of a FAT12 floppy (sectors are 512 bytes):
+  Sector 0:       Boot sector (BPB — BIOS Parameter Block + your boot code)
+  Sectors 1-9:    FAT copy 1 (allocation table)
+  Sectors 10-18:  FAT copy 2 (redundant)
+  Sectors 19-32:  Root directory (14 sectors × 512 bytes / 32 bytes per entry = 224 entries)
+  Sectors 33+:    Data clusters (cluster 2 onward; cluster 2 = sector 33)
+
+To read the floppy from the kernel, you need a simple ATA/floppy driver or
+— easier for development — use the Multiboot protocol (GRUB) which can load
+a ramdisk (initrd) containing a FAT filesystem into RAM for you.
+
+STEP 2: RAMDISK APPROACH (easier)
+  In QEMU you can pass -initrd myfiles.img which loads a file into RAM.
+  In the kernel, parse the Multiboot info structure to find the ramdisk
+  physical address and size, then parse FAT12 from that RAM buffer.
+
+STEP 3: IMPLEMENT FAT12 PARSER
+
+Key data structures:
+  struct DirEntry {
+      char name[8];       // padded with spaces
+      char ext[3];        // padded with spaces
+      uint8_t attr;       // 0x10 = directory, 0x20 = file, etc.
+      uint8_t reserved[10];
+      uint16_t time;
+      uint16_t date;
+      uint16_t first_cluster;
+      uint32_t file_size;
+  };
+
+  A FAT12 entry is 12 bits. Three bytes encode two entries. Reading entry N:
+    if N is even: entry = fat[N*3/2] | ((fat[N*3/2 + 1] & 0x0F) << 8)
+    if N is odd:  entry = (fat[N*3/2] >> 4) | (fat[N*3/2 + 1] << 4)
+  Entry values: 0x000 = free, 0xFF8-0xFFF = end of file, else = next cluster.
+
+STEP 4: SHELL COMMANDS using the FAT12 driver
+
+  ls — read the root directory table, print all entries where attr != 0
+       and name[0] != 0xE5 (deleted). Show name, size, date.
+
+  cat filename — find the file's DirEntry, follow the cluster chain in the
+       FAT, read each cluster's data bytes, print them to the screen.
+
+  cd dirname — FAT12 has subdirectory entries (attr = 0x10). Read the
+       directory cluster for the target dir. Keep a "current directory"
+       cluster number in a global variable.
+
+  mkdir, touch, write — require WRITING to the FAT and directory table.
+       This is more complex: find a free cluster, update the FAT chain,
+       create/update directory entries.
+
+================================================================================
+  K. RUNNING WITH QEMU — FULL REFERENCE
+================================================================================
+
+BASIC RUN:
+  qemu-system-i386 -drive format=raw,file=build/os.img
+
+WITH DEBUGGING:
+  qemu-system-i386 \
+    -drive format=raw,file=build/os.img \
+    -serial stdio \          <- serial port → your terminal (add outb(0x3F8, ch) to print)
+    -monitor stdio \         <- QEMU monitor (type 'info registers', 'x/10i $eip', etc.)
+    -d int,cpu_reset \       <- log all interrupts and CPU resets to stderr
+    -no-reboot               <- don't auto-reboot on triple fault (see the error)
+
+WITH GDB DEBUGGING:
+  # Terminal 1:
+  qemu-system-i386 -drive format=raw,file=build/os.img -s -S
+    -s   : shorthand for -gdb tcp::1234
+    -S   : freeze CPU at startup, wait for GDB to connect
+
+  # Terminal 2:
+  gdb -ex "target remote :1234" \
+      -ex "symbol-file build/kernel.elf" \
+      -ex "break kernel_main" \
+      -ex "continue"
+
+  Now you can:
+    (gdb) info registers
+    (gdb) x/10i $eip       — disassemble 10 instructions at EIP
+    (gdb) x/10xw 0xB8000   — examine VGA buffer
+    (gdb) step / next / continue
+
+USEFUL QEMU FLAGS:
+  -m 32M                — give the VM 32 MB of RAM (default is 128 MB)
+  -vga std              — use standard VGA (needed for some VBE modes)
+  -cpu 486              — emulate a minimal 486 CPU
+  -cpu qemu32           — emulate a generic 32-bit CPU
+  -display curses       — use text-mode display (run in SSH without X11)
+  -nographic            — no window, serial only (pair with -serial stdio)
+  -initrd file.img      — load a ramdisk file into RAM (Multiboot)
+  -kernel file.bin      — boot via Multiboot protocol (GRUB-compatible)
+  -boot d               — boot from CD-ROM
+  -boot a               — boot from floppy (default for raw images)
+
+CREATING A BOOTABLE ISO (for GRUB-based booting):
+  mkdir -p iso/boot/grub
+  cp build/kernel.bin iso/boot/
+  echo 'set timeout=0
+  set default=0
+  menuentry "MyOS" {
+      multiboot /boot/kernel.bin
+  }' > iso/boot/grub/grub.cfg
+  grub-mkrescue -o myos.iso iso/
+  qemu-system-i386 -cdrom myos.iso
+
+This uses GRUB as the bootloader, giving you Multiboot support,
+memory map, and the ability to load modules (ramdisk) for free.
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

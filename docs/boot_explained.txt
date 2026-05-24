@@ -1,0 +1,1210 @@
+================================================================================
+ BOOTLOADER DEEP DIVE — boot.asm  (File 3)
+ Line-by-line explanation of every instruction, register, and memory location
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BACKGROUND: WHAT IS A BOOTLOADER?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When you power on a PC, the BIOS (Basic Input/Output System) runs first. It
+performs hardware checks (POST = Power-On Self Test), then looks for a bootable
+device (disk, USB, CD). It reads the very first 512-byte sector of that device
+into RAM at physical address 0x7C00, checks that the last 2 bytes are 0x55 0xAA
+(the "boot signature"), and if they are, jumps to 0x7C00 and starts executing.
+
+At that moment:
+  - The CPU is in 16-bit REAL MODE
+  - Only 1 MB of RAM is accessible
+  - No operating system exists yet
+  - Almost no hardware is initialized
+  - The only help available is BIOS interrupt routines
+
+The bootloader's job is to:
+  1. Set up a safe environment (segments, stack)
+  2. Load the kernel from disk into RAM
+  3. Switch the CPU to 32-bit PROTECTED MODE
+  4. Hand control to the kernel
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BACKGROUND: x86 REGISTERS REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+General-purpose registers (16-bit names used in Real Mode):
+  AX  — Accumulator. Used for arithmetic, I/O, and as a temporary value holder.
+          AH = upper 8 bits of AX, AL = lower 8 bits of AX.
+  BX  — Base register. Often used as a memory pointer (base address).
+          BH = upper 8 bits, BL = lower 8 bits.
+  CX  — Counter register. Used in loop counting and shift operations.
+          CH = upper 8 bits, CL = lower 8 bits.
+  DX  — Data register. Used in I/O port operations and extended multiply/divide.
+          DH = upper 8 bits, DL = lower 8 bits.
+  SI  — Source Index. Points to source data in string operations (LODSB reads
+          from DS:SI).
+  DI  — Destination Index. Points to destination in string operations.
+  BP  — Base Pointer. Points to the base of the current stack frame.
+  SP  — Stack Pointer. Always points to the TOP of the stack. Moves DOWN as
+          data is pushed.
+
+In 32-bit Protected Mode the same registers are accessed with an 'E' prefix:
+  EAX, EBX, ECX, EDX, ESI, EDI, EBP, ESP  — 32-bit wide versions of the above.
+
+Segment registers (16-bit, cannot be set directly with a constant):
+  CS  — Code Segment. CPU fetches instructions from CS:IP.
+  DS  — Data Segment. Default segment for most memory read/write operations.
+  ES  — Extra Segment. Used as a second data segment (also by string ops).
+  SS  — Stack Segment. Combined with SP to form the stack address SS:SP.
+  FS  — General-purpose extra segment (introduced with 386).
+  GS  — General-purpose extra segment (introduced with 386).
+
+Special registers:
+  IP / EIP  — Instruction Pointer. Points to the NEXT instruction to execute.
+                You cannot read/write it directly; only jumps/calls change it.
+  CR0       — Control Register 0. Bit 0 is the Protection Enable (PE) flag.
+                Setting it switches the CPU from Real Mode to Protected Mode.
+  FLAGS     — Status register. Individual bits (flags) reflect results of
+                operations: CF (Carry), ZF (Zero), SF (Sign), etc.
+  GDTR      — GDT Register. Holds the address and size of the GDT. Set by LGDT.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BACKGROUND: REAL MODE MEMORY ADDRESSING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+In 16-bit Real Mode, the CPU has 20-bit address lines (1 MB total RAM).
+A memory address is formed from two 16-bit values:
+
+  Physical Address = Segment × 16 + Offset
+
+Example:
+  DS = 0x1000, SI = 0x0050
+  Physical address = 0x1000 × 16 + 0x0050 = 0x10000 + 0x0050 = 0x10050
+
+This scheme lets you address the full 1 MB with two 16-bit registers.
+
+Key fixed addresses:
+  0x00000 - 0x003FF  : Interrupt Vector Table (IVT) — 256 entries × 4 bytes
+  0x00400 - 0x004FF  : BIOS Data Area (BDA)
+  0x07C00 - 0x07DFF  : Where BIOS loads the boot sector (our bootloader!)
+  0x10000            : Where WE load the kernel
+  0x90000            : Where we put the stack top in protected mode
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ LINE-BY-LINE EXPLANATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+────────────────────────────────────────────────────────────────────────────────
+[BITS 16]
+────────────────────────────────────────────────────────────────────────────────
+This is a NASM DIRECTIVE — not an instruction that gets assembled into machine
+code. It tells NASM to generate 16-bit code from this point forward.
+
+Why? Because the CPU starts in 16-bit Real Mode. If NASM generated 32-bit
+opcodes here, the CPU would misinterpret the instruction lengths and prefixes,
+causing immediate crashes. The CPU and the assembler must agree on the bit width.
+
+
+────────────────────────────────────────────────────────────────────────────────
+[ORG 0x7C00]
+────────────────────────────────────────────────────────────────────────────────
+Another NASM directive. ORG = "Origin". It tells NASM to assume that the first
+byte of this file will be located at address 0x7C00 in memory.
+
+Why does this matter? Because NASM uses this address to calculate the values of
+labels (named addresses). For example, when we write "mov si, msg_loading",
+NASM needs to know the actual memory address of msg_loading. Without ORG, it
+would calculate wrong addresses and all label-based jumps and data references
+would point to garbage.
+
+0x7C00 is the universal boot address — IBM defined it in 1981 and every BIOS
+since then has honored it. The exact value comes from: the BIOS wanted to leave
+the first 32 KB for the IVT and BDA, and leave the 512-byte boot sector at the
+top of the first 32 KB. 0x7C00 = 31 KB = 32768 - 512 - 256.
+
+
+────────────────────────────────────────────────────────────────────────────────
+start:
+────────────────────────────────────────────────────────────────────────────────
+A LABEL. A label is a named marker for a memory address. NASM replaces every
+use of "start" with the actual address this assembles to (0x7C00 in this case).
+This label is the entry point — the BIOS jumps here after loading us.
+
+Labels are not instructions. They produce zero bytes in the output.
+
+
+────────────────────────────────────────────────────────────────────────────────
+cli
+────────────────────────────────────────────────────────────────────────────────
+Mnemonic: CLear Interrupt flag
+Opcode:   0xFA (1 byte)
+
+Sets the IF (Interrupt Flag) bit in the FLAGS register to 0.
+
+When IF=0, the CPU ignores maskable hardware interrupts (keyboard, timer, disk
+controller signals, etc.). Non-maskable interrupts (NMI) are NOT blocked.
+
+Why here? We are about to change segment registers. On some CPU models, if a
+hardware interrupt fires between setting SS and setting SP, the stack could be
+in an inconsistent state and the interrupt handler would corrupt memory. CLI
+prevents this race condition.
+
+
+────────────────────────────────────────────────────────────────────────────────
+xor ax, ax
+────────────────────────────────────────────────────────────────────────────────
+Mnemonic: eXclusive OR
+Opcode:   0x31 0xC0 (2 bytes)
+Effect:   AX = AX XOR AX = 0
+
+XOR of any value with itself is always 0 (every bit: 0^0=0, 1^1=0).
+
+Why not "mov ax, 0"? 
+  - "xor ax, ax" encodes in 2 bytes
+  - "mov ax, 0"  encodes in 3 bytes (needs to store the constant 0)
+  - Both are equally fast on modern CPUs; XOR was faster on older CPUs
+  - XOR is the conventional idiom — any experienced assembly reader recognizes it
+
+Also sets: ZF=1 (Zero Flag, because result is 0), SF=0, CF=0, OF=0.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ds, ax
+────────────────────────────────────────────────────────────────────────────────
+Moves the value of AX (which is 0) into DS (Data Segment register).
+
+DS cannot be set directly with a constant like "mov ds, 0" — the x86 ISA does
+not have an encoding for that. You must route through a general-purpose register.
+
+DS=0 means: data addresses are calculated as 0×16 + offset = just the offset.
+So any data address like [0x7C00] refers directly to physical address 0x7C00.
+This makes our flat-address data access predictable.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov es, ax
+────────────────────────────────────────────────────────────────────────────────
+Sets ES (Extra Segment) to 0.
+
+ES is used by string operations (MOVS, LODS, STOS) as the destination segment,
+and we also use it later when setting up the kernel load destination. Setting
+it to 0 now gives us a clean known state.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ss, ax
+────────────────────────────────────────────────────────────────────────────────
+Sets SS (Stack Segment) to 0.
+
+SS combined with SP gives the physical stack address: SS×16 + SP.
+With SS=0, the stack address = 0 + SP = SP directly. This simplifies reasoning
+about where the stack is.
+
+On real hardware, there is a 1-instruction window after MOV SS where interrupts
+are automatically suppressed by the CPU (this was introduced to prevent the
+race condition mentioned under CLI). NASM and modern CPUs handle this, but CLI
+before this block is still best practice.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov sp, 0x7C00
+────────────────────────────────────────────────────────────────────────────────
+Sets SP (Stack Pointer) to 0x7C00.
+
+SP always points to the TOP of the stack. The x86 stack grows DOWNWARD in
+memory — PUSH decrements SP then writes, POP reads then increments SP.
+
+Why 0x7C00? Our bootloader code starts at 0x7C00. By setting SP to 0x7C00,
+the stack starts just BELOW our bootloader code (the first push goes to
+0x7BFE, then 0x7BFC, etc.). This means the stack grows away from our code,
+into lower memory addresses, where there is free space.
+
+Physical stack space available: 0x00000 to 0x7BFFE — about 31 KB, more than
+enough for BIOS calls and our small bootloader.
+
+
+────────────────────────────────────────────────────────────────────────────────
+sti
+────────────────────────────────────────────────────────────────────────────────
+Mnemonic: SeT Interrupt flag
+Opcode:   0xFB (1 byte)
+
+Sets the IF bit in FLAGS to 1, re-enabling maskable hardware interrupts.
+
+We re-enable them here because BIOS disk and video interrupt calls (INT 0x10,
+INT 0x13) require the hardware interrupt system to be working. On real hardware,
+the disk controller signals completion via interrupts. Without STI, INT 0x13
+may hang forever on real hardware (QEMU is more forgiving).
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov [boot_drive], dl
+────────────────────────────────────────────────────────────────────────────────
+Writes the value of DL to the memory location labeled "boot_drive".
+
+The square brackets [ ] mean "memory address" — this writes TO memory, not
+to a register. Without brackets it would copy DL to the register named
+boot_drive, which doesn't exist.
+
+DL at boot time: The BIOS convention is that when it jumps to our bootloader,
+the DL register contains the BIOS drive number of the device we booted from:
+  0x00 = first floppy drive
+  0x01 = second floppy drive
+  0x80 = first hard disk (C: drive)
+  0x81 = second hard disk
+  0x82 = third hard disk
+  etc.
+
+We save this because we will need it later when calling INT 0x13 to read more
+sectors from the same drive. If we overwrote DL before then, we'd lose track
+of which drive to read from.
+
+"boot_drive" is defined later in the file as: boot_drive: db 0
+  db = Define Byte — reserves 1 byte of space, initialized to 0.
+  This creates a 1-byte variable in our 512-byte boot sector.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov si, msg_loading
+────────────────────────────────────────────────────────────────────────────────
+Loads the address (not the value) of msg_loading into SI.
+
+SI = Source Index register. It is used as a pointer — it holds a memory address.
+
+"msg_loading" is a label defined later:
+  msg_loading: db 'Loading kernel...', 13, 10, 0
+
+NASM replaces "msg_loading" with the actual 16-bit address of that data, which
+is somewhere in our 512-byte boot sector (NASM calculates it based on ORG 0x7C00
+plus however many bytes came before it in the file).
+
+After this instruction, SI points to the 'L' of "Loading kernel...".
+
+
+────────────────────────────────────────────────────────────────────────────────
+call print_string
+────────────────────────────────────────────────────────────────────────────────
+CALL performs two actions:
+  1. Pushes the return address (next instruction's address) onto the stack
+  2. Jumps to the address of print_string
+
+"print_string" is a label defined later in the file. The print_string subroutine
+will read characters from DS:SI and print them using BIOS, until it hits a
+null byte (0). After it finishes, RET pops the return address and jumps back.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ax, 0x1000
+────────────────────────────────────────────────────────────────────────────────
+Puts the value 0x1000 into AX as preparation for loading the kernel.
+
+0x1000 is the SEGMENT value we want to use. The physical address this segment
+base maps to = 0x1000 × 16 = 0x10000.
+
+We chose 0x10000 (64 KB into RAM) for the kernel because:
+  - It's safely above our bootloader at 0x7C00
+  - It's above the IVT/BDA at 0x00000-0x004FF
+  - It leaves room below it for BIOS data structures
+  - It's far enough from our stack (which is near 0x7C00) that there's no risk
+    of the kernel code or stack overlapping
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov es, ax
+────────────────────────────────────────────────────────────────────────────────
+Sets ES to 0x1000.
+
+The BIOS INT 0x13 read function uses ES:BX as the destination buffer address
+where it will write the sectors it reads. By setting ES=0x1000 and later BX=0,
+we tell the BIOS: "write the disk data to physical address 0x10000".
+
+
+────────────────────────────────────────────────────────────────────────────────
+xor bx, bx
+────────────────────────────────────────────────────────────────────────────────
+Sets BX to 0 (same XOR trick as before).
+
+BX is the offset within the ES segment where the BIOS will write data.
+ES:BX = 0x1000:0x0000 = physical address 0x10000.
+
+So our kernel will land at physical address 0x10000 in RAM.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ah, 0x02
+────────────────────────────────────────────────────────────────────────────────
+Sets AH (the upper byte of AX) to 0x02.
+
+INT 0x13 is the BIOS disk services interrupt. The function to call is selected
+by the value in AH:
+  AH = 0x00  : Reset disk system
+  AH = 0x01  : Get last status
+  AH = 0x02  : READ sectors from drive  ← we want this
+  AH = 0x03  : WRITE sectors to drive
+  AH = 0x08  : Get drive parameters
+  ... etc.
+
+AH = 0x02 means "read sectors".
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov al, 16
+────────────────────────────────────────────────────────────────────────────────
+Sets AL (the lower byte of AX) to 16.
+
+For INT 0x13 function 0x02, AL = number of sectors to read.
+  16 sectors × 512 bytes/sector = 8,192 bytes = 8 KB
+
+This means we'll read 8 KB of kernel code from disk. Adjust this number upward
+if your kernel is larger than 8 KB. Each sector is 512 bytes.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ch, 0
+────────────────────────────────────────────────────────────────────────────────
+Sets CH (upper byte of CX) to 0.
+
+For INT 0x13 function 0x02, CH = cylinder number (CHS addressing).
+
+CHS = Cylinder / Head / Sector — the old way of addressing disk locations.
+Disks were physically divided into:
+  - Cylinders: concentric circular tracks (same position on all platters)
+  - Heads: one per read/write surface (top and bottom of each platter)
+  - Sectors: pie-slice divisions of each track, numbered from 1
+
+CH = 0 means cylinder 0 (the outermost track, the very first one).
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov cl, 2
+────────────────────────────────────────────────────────────────────────────────
+Sets CL (lower byte of CX) to 2.
+
+For INT 0x13 function 0x02, CL = sector number.
+
+IMPORTANT: CHS sector numbers start at 1, not 0.
+  Sector 1 = the boot sector (that's US, our bootloader)
+  Sector 2 = the first sector after the bootloader ← we start reading here
+
+So we start reading at sector 2, which is immediately after our boot sector
+on the disk. This is where the Makefile put the kernel (cat boot.bin kernel.bin).
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov dh, 0
+────────────────────────────────────────────────────────────────────────────────
+Sets DH (upper byte of DX) to 0.
+
+For INT 0x13 function 0x02, DH = head number.
+Head 0 = the first read/write head, which reads the top surface of the first
+platter. On a floppy or simple disk image, we only use head 0.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov dl, [boot_drive]
+────────────────────────────────────────────────────────────────────────────────
+Reads the value stored at memory address "boot_drive" into DL.
+
+The square brackets mean READ FROM memory. This retrieves the drive number we
+saved earlier. DL is used by INT 0x13 to know WHICH drive to read from.
+
+This is why saving DL at the start was important — we might have used DX for
+other things between then and now (we did — we set DH=0 above, which modifies
+the upper half of DX but not DL).
+
+
+────────────────────────────────────────────────────────────────────────────────
+int 0x13
+────────────────────────────────────────────────────────────────────────────────
+Triggers software interrupt 0x13 — BIOS Disk Services.
+
+INT n works like this:
+  1. CPU pushes FLAGS, CS, and IP onto the stack
+  2. CPU looks up interrupt vector n in the IVT at address n×4
+  3. CPU jumps to the address stored there (the BIOS handler)
+  4. BIOS handler executes, reads the disk, fills ES:BX with data
+  5. BIOS sets CF=0 (success) or CF=1 (error) and stores error code in AH
+  6. BIOS executes IRET, restoring FLAGS, CS, IP — we continue after INT 0x13
+
+Full register state for this call:
+  AH = 0x02   : function "read sectors"
+  AL = 16     : read 16 sectors
+  CH = 0      : cylinder 0
+  CL = 2      : starting at sector 2
+  DH = 0      : head 0
+  DL = drive  : the boot drive number
+  ES:BX = 0x1000:0x0000 = physical 0x10000  : destination buffer
+
+After the call, AL = number of sectors actually read (if successful).
+
+
+────────────────────────────────────────────────────────────────────────────────
+jc disk_error
+────────────────────────────────────────────────────────────────────────────────
+JC = Jump if Carry. Jumps to "disk_error" label if CF (Carry Flag) = 1.
+
+After INT 0x13, CF=1 means the disk operation failed. Causes can include:
+  - Drive not ready
+  - Sector not found
+  - CRC (data integrity) error
+  - Controller error
+
+If CF=0, the read succeeded and we continue to the next instruction.
+If CF=1, we jump to the disk_error handler which prints an error and halts.
+
+This is critical error handling — if the kernel didn't load, jumping to 0x10000
+would execute random garbage as code, causing unpredictable behavior.
+
+
+────────────────────────────────────────────────────────────────────────────────
+cli
+────────────────────────────────────────────────────────────────────────────────
+Disables interrupts again before the protected mode switch.
+
+This is CRITICAL. During the transition to protected mode:
+  - We are loading the GDT (modifying GDTR)
+  - We are modifying CR0
+  - The IVT (used by Real Mode interrupts) is no longer valid in Protected Mode
+    (Protected Mode uses a different structure called the IDT)
+  
+If a hardware interrupt fired between loading the GDT and setting up the IDT
+in the kernel, the CPU would try to handle it using the Real Mode IVT handlers,
+but we'd be in Protected Mode — this would cause an immediate triple fault
+(the CPU's last resort: it resets itself).
+
+We leave interrupts disabled until the kernel sets up its own IDT.
+
+
+────────────────────────────────────────────────────────────────────────────────
+lgdt [gdt_descriptor]
+────────────────────────────────────────────────────────────────────────────────
+LGDT = Load Global Descriptor Table register.
+
+This instruction loads the 6-byte structure at "gdt_descriptor" into the
+CPU's GDTR (GDT Register). The GDTR has two fields:
+  - 16-bit LIMIT: size of the GDT in bytes minus 1
+  - 32-bit BASE:  linear address of the GDT in memory
+
+The square brackets mean we're reading from memory — the GDT descriptor is
+a 6-byte data structure sitting in our boot sector.
+
+The GDT (Global Descriptor Table) is a table of 8-byte "segment descriptors"
+that define memory segments for Protected Mode. In Real Mode, a segment register
+held a raw base address. In Protected Mode, a segment register holds a SELECTOR
+— an index into the GDT — and the CPU looks up the actual base/limit/permissions
+from the GDT entry.
+
+After LGDT, the CPU knows where the GDT is but Protected Mode is not yet active.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov eax, cr0
+────────────────────────────────────────────────────────────────────────────────
+Reads the current value of CR0 (Control Register 0) into EAX.
+
+CR0 is a special 32-bit control register. Its bits control fundamental CPU
+behavior. You cannot use CR0 directly with OR/AND — you must copy it to a
+general-purpose register, modify it, then write it back.
+
+Important bits in CR0:
+  Bit 0 (PE) — Protection Enable: 0=Real Mode, 1=Protected Mode
+  Bit 1 (MP) — Monitor coProcessor
+  Bit 2 (EM) — Emulation (of FPU)
+  Bit 16(WP) — Write Protect (ring 0 cannot write to read-only pages)
+  Bit 31(PG) — Paging Enable (enables virtual memory; we don't use this yet)
+
+We use EAX (32-bit) because CR0 is 32 bits wide.
+
+
+────────────────────────────────────────────────────────────────────────────────
+or eax, 0x1
+────────────────────────────────────────────────────────────────────────────────
+Sets bit 0 of EAX without affecting any other bits.
+
+OR with 1 = always 1. OR with 0 = unchanged.
+0x1 in binary = 00000000 00000000 00000000 00000001
+
+So this sets bit 0 (PE = Protection Enable) to 1, leaving all other bits as
+they were. This is the correct way to set a single bit.
+
+After this instruction, EAX = (old CR0) | 0x00000001.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov cr0, eax
+────────────────────────────────────────────────────────────────────────────────
+Writes the modified value back to CR0.
+
+THE MOMENT THIS EXECUTES, THE CPU IS IN PROTECTED MODE.
+
+However, the CS (Code Segment) register still holds the old Real Mode value.
+The CPU is now interpreting CS as a GDT selector, not a segment base address.
+The instruction pointer is still correct (pointing to the next instruction),
+but CS is wrong. We must fix this immediately with a far jump.
+
+
+────────────────────────────────────────────────────────────────────────────────
+jmp 0x08:protected_mode_start
+────────────────────────────────────────────────────────────────────────────────
+A FAR JUMP — jumps to a new CS:IP.
+
+0x08 is the segment selector for our code segment in the GDT:
+  - Bits 1-0: RPL (Requested Privilege Level) = 00 → Ring 0 (kernel)
+  - Bit 2:    TI (Table Indicator) = 0 → GDT (not LDT)
+  - Bits 15-3: Index = 1 → entry 1 in the GDT (the code descriptor)
+  - Entry 0 = null descriptor (8 bytes), Entry 1 = code = offset 8 = 0x08 ✓
+
+This jump does three critical things:
+  1. Loads CS with 0x08, making the CPU look up the code descriptor in the GDT
+  2. Sets EIP to the address of protected_mode_start
+  3. FLUSHES the CPU's instruction prefetch queue, which may still have 16-bit
+     instructions in it from before the mode switch — after this jump the CPU
+     decodes all future instructions as 32-bit
+
+"protected_mode_start" is a label defined just below the [BITS 32] directive.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ PRINT_STRING SUBROUTINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+print_string:
+────────────────────────────────────────────────────────────────────────────────
+Label marking the start of the print subroutine.
+Input contract: SI must point to a null-terminated string in DS:SI.
+
+
+────────────────────────────────────────────────────────────────────────────────
+pusha
+────────────────────────────────────────────────────────────────────────────────
+PUSHA = Push All general-purpose registers onto the stack.
+
+Pushes (in order): AX, CX, DX, BX, SP, BP, SI, DI — 8 registers × 2 bytes = 16
+bytes total.
+
+This preserves all registers so the caller's values are not corrupted by our
+subroutine. The corresponding POPA at the end restores them all.
+
+This is important because we modify AX, BH, BL inside the print loop, and the
+caller might be using those registers for something else.
+
+
+────────────────────────────────────────────────────────────────────────────────
+.loop:
+────────────────────────────────────────────────────────────────────────────────
+A LOCAL LABEL (prefix with dot). In NASM, local labels are scoped to the
+surrounding non-local label (print_string). This avoids name collisions if
+you have .loop in multiple subroutines.
+
+This is the start of the character-printing loop.
+
+
+────────────────────────────────────────────────────────────────────────────────
+lodsb
+────────────────────────────────────────────────────────────────────────────────
+LODSB = LOaD String Byte.
+
+This single instruction does TWO things:
+  1. Reads the byte at memory address DS:SI into AL
+  2. Increments SI by 1 (so it points to the next byte)
+
+It's equivalent to:
+  mov al, [ds:si]
+  inc si
+
+But more compact and sometimes faster. It's the standard idiom for walking
+through a string byte by byte.
+
+
+────────────────────────────────────────────────────────────────────────────────
+or al, al
+────────────────────────────────────────────────────────────────────────────────
+OR AL with itself.
+
+OR of anything with itself = the same value (no bits change).
+The only reason to do this is for the SIDE EFFECT: it sets the Zero Flag (ZF).
+  - If AL = 0  → ZF = 1 (the result is zero)
+  - If AL ≠ 0  → ZF = 0
+
+This is checking whether AL is zero (the null terminator of the string).
+
+Alternative: "cmp al, 0" does the same check but is 1 byte longer.
+"or al, al" is the conventional idiom for "test if AL is zero".
+
+Also equivalent: "test al, al" — AND without storing the result, also sets ZF.
+
+
+────────────────────────────────────────────────────────────────────────────────
+jz .done
+────────────────────────────────────────────────────────────────────────────────
+JZ = Jump if Zero (jumps if ZF = 1).
+
+If AL was 0 (null terminator), we're done printing. Jump to .done to clean up
+and return. Otherwise, fall through to print the character.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ah, 0x0E
+────────────────────────────────────────────────────────────────────────────────
+Sets AH to 0x0E.
+
+INT 0x10 is the BIOS Video Services interrupt. AH selects the function:
+  AH = 0x00 : Set video mode
+  AH = 0x01 : Set cursor shape
+  AH = 0x02 : Set cursor position
+  AH = 0x0E : Teletype Output ← we want this — print character and advance cursor
+  AH = 0x13 : Write string
+  ... etc.
+
+"Teletype" means: print the character in AL, advance the cursor, handle
+carriage return (13) and line feed (10) specially.
+
+AL already contains our character (from LODSB).
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov bh, 0x00
+────────────────────────────────────────────────────────────────────────────────
+Sets BH to 0.
+
+For INT 0x10 / AH=0x0E:
+  BH = display page number.
+
+The BIOS can maintain multiple "pages" of text (like virtual screens). Page 0
+is the default visible page. We always use page 0.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov bl, 0x07
+────────────────────────────────────────────────────────────────────────────────
+Sets BL to 0x07.
+
+For INT 0x10 / AH=0x0E in graphics modes:
+  BL = foreground color.
+
+In text mode, this is technically ignored by most BIOS implementations, but
+setting it explicitly avoids undefined behavior. 0x07 = light gray on black,
+the classic terminal default.
+
+Color byte encoding (for text mode):
+  Bits 6-4: background color (0=black, 1=blue, 2=green, etc.)
+  Bits 3-0: foreground color (7=light gray, 15=bright white, etc.)
+
+
+────────────────────────────────────────────────────────────────────────────────
+int 0x10
+────────────────────────────────────────────────────────────────────────────────
+Triggers software interrupt 0x10 — BIOS Video Services.
+
+At this point:
+  AH = 0x0E    : Teletype output function
+  AL = character to print (loaded by LODSB)
+  BH = 0x00    : page 0
+  BL = 0x07    : color (gray)
+
+The BIOS handler:
+  1. Writes the character to the screen at the current cursor position
+  2. Advances the cursor right by 1
+  3. Handles special chars: 0x0D (CR) moves cursor to column 0;
+     0x0A (LF) moves cursor down one row; 0x08 (BS) moves cursor left
+  4. Scrolls the screen up if the cursor goes past the last row
+  5. Returns (IRET)
+
+
+────────────────────────────────────────────────────────────────────────────────
+jmp .loop
+────────────────────────────────────────────────────────────────────────────────
+Unconditional jump back to .loop to process the next character.
+
+
+────────────────────────────────────────────────────────────────────────────────
+.done:
+────────────────────────────────────────────────────────────────────────────────
+Label reached when the null terminator is found.
+
+
+────────────────────────────────────────────────────────────────────────────────
+popa
+────────────────────────────────────────────────────────────────────────────────
+POPA = Pop All general-purpose registers from the stack.
+
+Restores DI, SI, BP, SP, BX, DX, CX, AX in that order (reverse of PUSHA).
+All registers are now exactly as they were before we entered print_string.
+
+Note: POPA skips restoring SP from the stack (it adjusts SP by 2 instead) to
+avoid corrupting the current stack pointer — this is by CPU design.
+
+
+────────────────────────────────────────────────────────────────────────────────
+ret
+────────────────────────────────────────────────────────────────────────────────
+Return from subroutine. Pops the return address (pushed by CALL) from the stack
+into IP. Execution continues at the instruction after the original CALL.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DISK ERROR HANDLER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+disk_error:
+────────────────────────────────────────────────────────────────────────────────
+Label for the error handler. Jumped to if INT 0x13 sets CF=1.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov si, msg_disk_error
+────────────────────────────────────────────────────────────────────────────────
+Points SI at the error message string "Disk read error!", 13, 10, 0.
+
+
+────────────────────────────────────────────────────────────────────────────────
+call print_string
+────────────────────────────────────────────────────────────────────────────────
+Prints the error message.
+
+
+────────────────────────────────────────────────────────────────────────────────
+hlt
+────────────────────────────────────────────────────────────────────────────────
+HLT = HaLT the processor.
+
+Stops CPU execution. The CPU enters a low-power state and waits for a hardware
+interrupt. Since we disabled interrupts (CLI) before this, no interrupt will
+come, and the CPU stays halted indefinitely.
+
+Note: In a more robust bootloader, you'd loop: "cli / .hang: hlt / jmp .hang"
+because NMI (Non-Maskable Interrupt) can wake HLT even with IF=0. The loop
+re-halts if somehow woken.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DATA SECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+boot_drive:     db 0
+────────────────────────────────────────────────────────────────────────────────
+DB = Define Byte. Allocates 1 byte of space in the output, initialized to 0.
+"boot_drive:" is a label — its address is used in "mov [boot_drive], dl" and
+"mov dl, [boot_drive]". This is essentially a 1-byte global variable.
+
+
+────────────────────────────────────────────────────────────────────────────────
+msg_loading:    db 'Loading kernel...', 13, 10, 0
+────────────────────────────────────────────────────────────────────────────────
+Defines the bytes of the loading message.
+
+'Loading kernel...' — NASM emits one byte per ASCII character:
+  'L'=76, 'o'=111, 'a'=97, 'd'=100, 'i'=105, 'n'=110, 'g'=103, ' '=32,
+  'k'=107, 'e'=101, 'r'=114, 'n'=110, 'e'=101, 'l'=108, '.'=46, '.'=46, '.'=46
+
+13  — ASCII carriage return (CR, \r). Moves cursor to column 0.
+10  — ASCII line feed (LF, \n). Moves cursor down one row.
+0   — Null terminator. Signals end of string to print_string.
+
+Together 13+10 = CRLF, the Windows/DOS line ending convention (which BIOS uses).
+
+
+────────────────────────────────────────────────────────────────────────────────
+msg_disk_error: db 'Disk read error!', 13, 10, 0
+────────────────────────────────────────────────────────────────────────────────
+Same structure as msg_loading. Null-terminated string with CRLF.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GLOBAL DESCRIPTOR TABLE (GDT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Background: What is the GDT?
+
+In Protected Mode, memory is NOT accessed via segment × 16 + offset anymore.
+Instead, each segment register holds a SELECTOR — a 16-bit value that is an
+index into the GDT. The CPU looks up the GDT entry to find:
+  - BASE:  32-bit starting address of the segment
+  - LIMIT: size of the segment (in bytes or 4KB pages)
+  - ACCESS: permissions (readable, writable, executable, ring level, etc.)
+
+Each GDT entry is exactly 8 bytes with a complex layout (for historical reasons,
+fields are split and scattered across the 8 bytes).
+
+GDT entry layout (8 bytes = 64 bits):
+  Bits 15-0:  Limit bits 0-15
+  Bits 31-16: Base bits 0-15
+  Bits 39-32: Base bits 16-23
+  Bits 47-40: Access byte
+  Bits 51-48: Limit bits 16-19
+  Bits 55-52: Flags
+  Bits 63-56: Base bits 24-31
+
+The first entry (index 0) MUST be all zeros — this is the "null descriptor".
+Accessing memory through selector 0 raises a General Protection Fault.
+
+
+────────────────────────────────────────────────────────────────────────────────
+gdt_start:
+────────────────────────────────────────────────────────────────────────────────
+Label marking the first byte of the GDT. Used to calculate GDT size and address.
+
+
+────────────────────────────────────────────────────────────────────────────────
+gdt_null:
+    dd 0x00000000
+    dd 0x00000000
+────────────────────────────────────────────────────────────────────────────────
+DD = Define Doubleword = 4 bytes. Two DDs = 8 bytes = one GDT entry.
+All zeros = the mandatory null descriptor. Entry 0, selector value 0x0000.
+
+
+────────────────────────────────────────────────────────────────────────────────
+gdt_code:
+    dw 0xFFFF
+────────────────────────────────────────────────────────────────────────────────
+DW = Define Word = 2 bytes.
+Limit bits 0-15 = 0xFFFF.
+
+Combined with the Flags byte below, the full limit is 0xFFFFF (20 bits).
+With granularity bit set, limit is in 4KB pages: 0xFFFFF × 4KB = 4 GB.
+So this segment spans the full 4 GB address space.
+
+
+────────────────────────────────────────────────────────────────────────────────
+    dw 0x0000
+────────────────────────────────────────────────────────────────────────────────
+Base bits 0-15 = 0x0000.
+The segment starts at address 0.
+
+
+────────────────────────────────────────────────────────────────────────────────
+    db 0x00
+────────────────────────────────────────────────────────────────────────────────
+Base bits 16-23 = 0x00.
+Still part of base address = 0. The base is split across three non-contiguous
+fields in the descriptor (a legacy decision from the 286 era).
+
+
+────────────────────────────────────────────────────────────────────────────────
+    db 10011010b
+────────────────────────────────────────────────────────────────────────────────
+Access byte for the code segment. Binary: 1 00 1 1 0 1 0
+
+Bit by bit (from bit 7 down to bit 0):
+  Bit 7 = 1  : Present bit. Must be 1 for valid segments. 0 = segment not loaded.
+  Bit 6 = 0  : DPL bit 1 (Descriptor Privilege Level, 2 bits total)
+  Bit 5 = 0  : DPL bit 0. DPL = 00 = Ring 0 = kernel level.
+                Ring 0 = highest privilege (kernel). Ring 3 = lowest (user apps).
+  Bit 4 = 1  : Descriptor type. 1 = code or data segment. 0 = system segment.
+  Bit 3 = 1  : Executable. 1 = code segment (can be fetched as instructions).
+                             0 = data segment (cannot execute from).
+  Bit 2 = 0  : Direction/Conforming.
+                For code: Conforming=0 = can only be called from same ring.
+                           Conforming=1 = can be called from lower-privilege rings.
+  Bit 1 = 1  : Readable. For code segments: 1 = can read as data (e.g. constants).
+                           0 = execute-only (reading raises fault).
+  Bit 0 = 0  : Accessed. CPU sets this to 1 when it uses the segment.
+                           Start at 0; CPU manages it.
+
+
+────────────────────────────────────────────────────────────────────────────────
+    db 11001111b
+────────────────────────────────────────────────────────────────────────────────
+Flags + Limit bits 16-19. Binary: 1 1 0 0 1111
+
+High nibble (bits 7-4) = Flags:
+  Bit 7 = 1  : Granularity. 1 = limit is in 4KB pages. 0 = limit in bytes.
+                With G=1 and limit=0xFFFFF: 0xFFFFF × 4096 = 4 GB addressable.
+  Bit 6 = 1  : Size. 1 = 32-bit protected mode segment.
+                       0 = 16-bit protected mode segment.
+                Must be 1 when we're writing 32-bit code.
+  Bit 5 = 0  : Long mode (L bit). 1 = 64-bit code segment. We use 0 (32-bit).
+  Bit 4 = 0  : Reserved. Always 0.
+
+Low nibble (bits 3-0) = Limit bits 16-19 = 0xF = 1111.
+Combined with earlier 0xFFFF: full limit = 0xFFFFF.
+
+
+────────────────────────────────────────────────────────────────────────────────
+    db 0x00
+────────────────────────────────────────────────────────────────────────────────
+Base bits 24-31 = 0x00.
+Base address is fully 0x00000000 = the segment starts at the very beginning of
+the address space and extends 4 GB. This is a "flat" memory model.
+
+
+────────────────────────────────────────────────────────────────────────────────
+gdt_data:
+    dw 0xFFFF   : same limit as code
+    dw 0x0000   : same base (0)
+    db 0x00     : same base high byte
+    db 10010010b : access byte — differs from code segment!
+────────────────────────────────────────────────────────────────────────────────
+Access byte for the data segment. Binary: 1 00 1 0 0 1 0
+
+Compared to code segment (10011010b), the differences:
+  Bit 3 = 0  : Executable = 0. This is a DATA segment — cannot execute from it.
+  Bit 1 = 1  : Writable. For data segments: 1 = read+write. 0 = read-only.
+                (For code segments, bit 1 means Readable. For data, it means Writable.)
+
+Everything else: same as code. Present, Ring 0, type=code/data, base=0, limit=4GB.
+
+
+────────────────────────────────────────────────────────────────────────────────
+    db 11001111b : same flags as code (32-bit, 4KB granularity, full 4GB)
+    db 0x00      : same base bits 24-31
+────────────────────────────────────────────────────────────────────────────────
+Identical to the code segment's flags — same flat 4 GB span, 32-bit mode.
+
+
+────────────────────────────────────────────────────────────────────────────────
+gdt_end:
+────────────────────────────────────────────────────────────────────────────────
+Label immediately after the last GDT byte. Used to calculate the GDT size:
+  gdt_end - gdt_start = total GDT size in bytes.
+
+
+────────────────────────────────────────────────────────────────────────────────
+gdt_descriptor:
+    dw gdt_end - gdt_start - 1
+────────────────────────────────────────────────────────────────────────────────
+The 6-byte structure that LGDT reads. First field:
+  DW (2 bytes) = GDT size limit = total size - 1.
+  Why minus 1? The LGDT limit field is the LAST valid byte offset, not the count.
+  If GDT is 24 bytes (3 entries × 8), limit = 23 = 0x17.
+
+gdt_end - gdt_start is calculated by NASM at assembly time (it knows both
+label addresses). This is a COMPILE-TIME constant — no runtime calculation.
+
+
+────────────────────────────────────────────────────────────────────────────────
+    dd gdt_start
+────────────────────────────────────────────────────────────────────────────────
+DD (4 bytes) = 32-bit linear address of the GDT itself.
+NASM fills this with the actual address of gdt_start (0x7C00 + offset of gdt_start
+within the file). LGDT reads this and stores it in GDTR.BASE.
+
+
+────────────────────────────────────────────────────────────────────────────────
+CODE_SEG equ gdt_code - gdt_start    ; = 8  = 0x08
+DATA_SEG equ gdt_data - gdt_start    ; = 16 = 0x10
+────────────────────────────────────────────────────────────────────────────────
+EQU = define a constant (like #define in C). No bytes are emitted.
+
+Segment selectors are BYTE OFFSETS into the GDT:
+  gdt_null is at offset 0  → selector 0x00 (never use directly)
+  gdt_code is at offset 8  → selector 0x08
+  gdt_data is at offset 16 → selector 0x10
+
+The far jump "jmp 0x08:protected_mode_start" uses CODE_SEG = 0x08.
+In protected_mode_start, "mov ax, DATA_SEG" loads 0x10 into segment registers.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 32-BIT PROTECTED MODE CODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+[BITS 32]
+────────────────────────────────────────────────────────────────────────────────
+NASM directive. All code assembled from here uses 32-bit instruction encodings.
+
+Without this, NASM would still generate 16-bit opcodes even though we jumped
+into 32-bit mode, and the CPU would misinterpret them.
+
+
+────────────────────────────────────────────────────────────────────────────────
+protected_mode_start:
+────────────────────────────────────────────────────────────────────────────────
+Label at the entry point of 32-bit code. The far jump lands here.
+At this point CS=0x08 (code segment), all other segment registers still have
+garbage from Real Mode — we must fix them immediately.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ax, DATA_SEG
+────────────────────────────────────────────────────────────────────────────────
+Loads 0x10 (the data segment selector) into AX.
+
+In Protected Mode, segment registers hold SELECTORS (GDT indices), not addresses.
+0x10 = GDT entry 2 (gdt_data), which describes base=0, limit=4GB, writable.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ds, ax
+mov ss, ax
+mov es, ax
+mov fs, ax
+mov gs, ax
+────────────────────────────────────────────────────────────────────────────────
+Sets ALL data segment registers to the data segment selector (0x10).
+
+After these instructions:
+  CS = 0x08 : code segment (set by the far jump)
+  DS = 0x10 : data segment (our flat 4GB data segment)
+  SS = 0x10 : stack segment (same flat segment)
+  ES = 0x10 : extra segment (same)
+  FS = 0x10 : general purpose (same)
+  GS = 0x10 : general purpose (same)
+
+This is the "flat memory model" — all segments map identically to the full
+4 GB address space, so effective addresses equal physical addresses directly.
+No more segment × 16 math needed.
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov ebp, 0x90000
+────────────────────────────────────────────────────────────────────────────────
+Sets EBP (Base Pointer) to 0x90000.
+
+EBP marks the "base" of the current stack frame. Setting it to 0x90000 means
+the kernel's stack will be anchored at physical address 0x90000 (576 KB).
+
+Why 0x90000?
+  - It's well above our kernel at 0x10000
+  - It's below the 1 MB boundary (0xFFFFF) where Real Mode memory ends
+  - It gives the kernel ~512 KB of stack space growing downward before it
+    would hit our kernel code — more than enough for early kernel operation
+  - It avoids the BIOS Extended Data Area (BDA) which sits just below 0xA0000
+
+
+────────────────────────────────────────────────────────────────────────────────
+mov esp, ebp
+────────────────────────────────────────────────────────────────────────────────
+Sets ESP (Stack Pointer) equal to EBP.
+
+A fresh stack frame starts with ESP = EBP. The stack grows downward from here.
+First PUSH will go to 0x8FFFC (ESP decremented by 4 for a 32-bit push).
+
+In Real Mode we had SP = 0x7C00. Now in Protected Mode we establish a new
+higher stack location, safely separated from our bootloader code.
+
+
+────────────────────────────────────────────────────────────────────────────────
+call 0x10000
+────────────────────────────────────────────────────────────────────────────────
+Calls the kernel entry point at physical address 0x10000.
+
+CALL pushes the return address (EIP of next instruction = address of HLT)
+onto the stack, then jumps to 0x10000.
+
+0x10000 is where we loaded the kernel with INT 0x13 (ES=0x1000, BX=0x0000,
+physical = 0x1000 × 16 + 0 = 0x10000). The kernel's first byte is there.
+
+In practice, the kernel should never return. But using CALL instead of JMP
+means if it did return (unlikely bug scenario), we'd land on HLT rather than
+executing random memory.
+
+
+────────────────────────────────────────────────────────────────────────────────
+hlt
+────────────────────────────────────────────────────────────────────────────────
+Safety net halt. If the kernel ever returns (it shouldn't), we stop here.
+In Protected Mode with no IDT set up, interrupts would triple-fault anyway,
+so this is mostly symbolic — but it's good practice.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BOOT SIGNATURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+times 510-($-$$) db 0
+────────────────────────────────────────────────────────────────────────────────
+NASM "times" directive: repeat something N times.
+
+$  = current address (address of this line)
+$$ = address of the start of the current section (= 0x7C00 due to ORG)
+($-$$) = number of bytes assembled so far in this file
+
+510 - ($-$$) = how many zero bytes to insert to reach byte offset 510.
+
+This pads the boot sector so that the magic bytes 0x55 0xAA land exactly
+at bytes 510 and 511 (the last 2 bytes of the 512-byte sector).
+
+Without this padding, the 512-byte sector would be shorter and the BIOS
+would not find the signature in the right place — it would reject the disk.
+
+
+────────────────────────────────────────────────────────────────────────────────
+dw 0xAA55
+────────────────────────────────────────────────────────────────────────────────
+DW = Define Word = 2 bytes, stored in LITTLE-ENDIAN order.
+
+Little-endian means the least significant byte is stored first:
+  0xAA55 → stored as: byte 510 = 0x55, byte 511 = 0xAA
+
+The BIOS checks: is byte 510 == 0x55 AND byte 511 == 0xAA?
+If yes → valid boot sector, jump to 0x7C00.
+If no  → not bootable, try next device.
+
+This magic number has been the boot signature since the original IBM PC BIOS.
+0x55AA in binary alternates bits perfectly (01010101 10101010) which also made
+it useful as an electrical integrity check on early hardware.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ COMPLETE EXECUTION FLOW SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ [POWER ON]
+      │
+      ▼
+ [BIOS POST]
+      │ Finds boot device
+      │ Reads sector 0 (512 bytes) into RAM at 0x7C00
+      │ Checks bytes 510-511 == 0x55 0xAA
+      │ Sets DL = boot drive number
+      │ JMPs to 0x7C00
+      ▼
+ [start:] ── cli
+            ── xor ax,ax → zero AX
+            ── mov ds/es/ss, ax → segments = 0
+            ── mov sp, 0x7C00 → stack below bootloader
+            ── sti → re-enable interrupts
+            ── mov [boot_drive], dl → save drive number
+            ── print "Loading kernel..."
+            │
+            ▼
+ [INT 0x13] ── Read 16 sectors from disk starting at sector 2
+            ── Destination: ES:BX = 0x1000:0x0000 = physical 0x10000
+            ── Kernel is now in RAM at 0x10000
+            │
+            ▼ (if CF set → disk_error → print error → hlt)
+            │
+ [PM SETUP] ── cli → disable interrupts
+            ── lgdt → load GDT descriptor into GDTR
+            ── set CR0 bit 0 → PROTECTED MODE ENABLED
+            ── far jmp 0x08:protected_mode_start → flush pipeline, fix CS
+            │
+            ▼
+ [32-BIT]   ── mov all segment registers to DATA_SEG (0x10)
+            ── mov ebp/esp, 0x90000 → set up 32-bit stack
+            ── call 0x10000 → JUMP TO KERNEL
+            │
+            ▼
+ [KERNEL RUNS] (bootloader's job is done)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ KEY MEMORY MAP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ Physical Address   Contents
+ ─────────────────  ────────────────────────────────────────────
+ 0x00000 - 0x003FF  IVT — Interrupt Vector Table (BIOS, 256 × 4 bytes)
+ 0x00400 - 0x004FF  BDA — BIOS Data Area
+ 0x00500 - 0x07BFF  Free RAM (our Real Mode stack grows down into here)
+ 0x07C00 - 0x07DFF  Our bootloader (512 bytes)
+ 0x07E00 - 0x0FFFF  Free RAM
+ 0x10000 - 0x11FFF  Kernel loaded here (16 sectors × 512 = 8 KB)
+ 0x12000 - 0x8FFFF  Free RAM
+ 0x90000            Top of our Protected Mode stack (grows downward)
+ 0xA0000 - 0xBFFFF  VGA / video memory
+ 0xC0000 - 0xFFFFF  BIOS ROM and option ROMs
+
+================================================================================
+ END OF EXPLANATION
+================================================================================
