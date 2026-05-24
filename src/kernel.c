@@ -729,21 +729,29 @@ static void idt_install(void) {
 
 /* =========================================================================
  * 13. BOOT SPLASH SCREEN
- * ========================================================================= */
+ * =========================================================================
+ * 
+ * Global theme state: 0 = Light Theme, 1 = Dark Theme */
+int current_theme = 0;
 
-/*
- * draw_banner — draws a colourful ASCII-art banner directly to the VGA buffer.
- * We bypass vga_puts() so we can set per-character colours.
- */
 static void draw_banner(void) {
-    /* Full-screen fill: dark blue background */
-    uint8_t bg = vga_attr(VGA_LIGHT_GREY, VGA_BLUE);
+    /* --- Theme Color Definitions --- */
+    uint8_t c_bg     = current_theme ? VGA_BLACK      : VGA_WHITE;
+    uint8_t c_fill   = current_theme ? VGA_BLACK      : VGA_LIGHT_GREY;
+    uint8_t c_border = current_theme ? VGA_WHITE      : VGA_DARK_GREY;
+    uint8_t c_logo   = current_theme ? VGA_LIGHT_BLUE : VGA_BLUE;
+    uint8_t c_text   = current_theme ? VGA_WHITE      : VGA_DARK_GREY;
+    uint8_t c_dev    = current_theme ? VGA_LIGHT_RED  : VGA_RED;
+    uint8_t c_prompt = current_theme ? VGA_LIGHT_GREY : VGA_MAGENTA;
+
+    /* Full-screen fill */
+    uint8_t bg = vga_attr(c_fill, c_bg);
     for (int r = 0; r < VGA_ROWS; r++)
         for (int c = 0; c < VGA_COLS; c++)
             vga_buf[r * VGA_COLS + c] = vga_cell(' ', bg);
 
     /* -- Row 1: top border -- */
-    uint8_t border_attr = vga_attr(VGA_YELLOW, VGA_BLUE);
+    uint8_t border_attr = vga_attr(c_border, c_bg);
     for (int c = 0; c < VGA_COLS; c++)
         vga_putchar_at('=', border_attr, 1, c);
 
@@ -756,10 +764,10 @@ static void draw_banner(void) {
         "  | $$  | $$ |____  $$  ",
         "  | $$  | $$ /$$  | $$  ",
         "  |  $$$$$$/|  $$$$$$/  ",
-        "   |______/  |______/   ",
+        "   \\______/  \\______/ ",
     };
 
-    uint8_t logo_attr = vga_attr(VGA_LIGHT_CYAN, VGA_BLUE);
+    uint8_t logo_attr = vga_attr(c_logo, c_bg);
     for (int i = 0; i < 8; i++) {
         const char *line = logo[i];
         int col = 27;
@@ -768,51 +776,143 @@ static void draw_banner(void) {
                 vga_putchar_at(line[j], logo_attr, 3 + i, col);
     }
 
-    /* -- Row 12: tagline -- */
     const char *tag = "[ OS kernel built built in C for CS304 course project ]";
-    uint8_t tag_attr = vga_attr(VGA_YELLOW, VGA_BLUE);
+    uint8_t tag_attr = vga_attr(c_text, c_bg);
     int tag_col = (VGA_COLS - (int)k_strlen(tag)) / 2;
     for (int i = 0; tag[i]; i++)
         vga_putchar_at(tag[i], tag_attr, 12, tag_col + i);
 
-    /* -- Row 14: version / arch line -- */
-    const char *ver = "OS v0.1  |  x86 32-bit Protected Mode  |  GCC Toolchain";
-    uint8_t ver_attr = vga_attr(VGA_WHITE, VGA_BLUE);
+    const char *ver = "OS v1.0.2  |  x86 32-bit Protected Mode  |  GCC Toolchain";
+    uint8_t ver_attr = vga_attr(c_text, c_bg);
     int ver_col = (VGA_COLS - (int)k_strlen(ver)) / 2;
     for (int i = 0; ver[i]; i++)
         vga_putchar_at(ver[i], ver_attr, 14, ver_col + i);
 
-    /* -- Row 16: feature flags -- */
-    const char *feat = "  IDT  |  PIC  |  Timer IRQ  |  PS/2 Keyboard  |  Shell  ";
-    uint8_t feat_attr = vga_attr(VGA_LIGHT_GREEN, VGA_BLUE);
-    int feat_col = (VGA_COLS - (int)k_strlen(feat)) / 2;
-    for (int i = 0; feat[i]; i++)
-        vga_putchar_at(feat[i], feat_attr, 16, feat_col + i);
+    const char *dev_frstln = "                            Dev team:                               ";
+    uint8_t dev_frstln_attr = vga_attr(c_dev, c_bg);
+    int dev_frstln_col = (VGA_COLS - (int)k_strlen(dev_frstln)) / 2;
+    for (int i = 0; dev_frstln[i]; i++)
+        vga_putchar_at(dev_frstln[i], dev_frstln_attr, 16, dev_frstln_col + i);
 
-    /* -- Row 18: bottom border -- */
+    const char *dev_scndln = "Amar Kucevic, Vedad Halilovic, Faris Skula, Admir Babovic, Ali Murtic";
+    uint8_t dev_scndln_attr = vga_attr(c_dev, c_bg);
+    int dev_scndln_col = (VGA_COLS - (int)k_strlen(dev_scndln)) / 2;
+    for (int i = 0; dev_scndln[i]; i++)
+        vga_putchar_at(dev_scndln[i], dev_scndln_attr, 17, dev_scndln_col + i);
+
     for (int c = 0; c < VGA_COLS; c++)
-        vga_putchar_at('=', border_attr, 18, c);
+        vga_putchar_at('=', border_attr, 19, c);
 
-    /* -- Row 20: prompt -- */
-    const char *press = "Press any key to continue...";
-    uint8_t press_attr = vga_attr(VGA_LIGHT_MAGENTA, VGA_BLUE);
+    char *toggle = "Press SPACE to toggle dark theme";
+    if (current_theme == 1) {
+        toggle = "Press SPACE to toggle light theme";
+    }
+    uint8_t toggle_attr = vga_attr(c_prompt, c_bg);
+    int toggle_col = (VGA_COLS - (int)k_strlen(toggle)) / 2;
+    for (int i = 0; toggle[i]; i++)
+        vga_putchar_at(toggle[i], toggle_attr, 21, toggle_col + i);
+
+    const char *press = "Press any other key to continue to shell...";
+    uint8_t press_attr = vga_attr(c_prompt, c_bg);
     int press_col = (VGA_COLS - (int)k_strlen(press)) / 2;
     for (int i = 0; press[i]; i++)
-        vga_putchar_at(press[i], press_attr, 20, press_col + i);
-
-    /* -- Decorative corners and side bars -- */
-    uint8_t corner_attr = vga_attr(VGA_LIGHT_RED, VGA_BLUE);
-    vga_putchar_at('*', corner_attr, 1,  0);
-    vga_putchar_at('*', corner_attr, 1,  VGA_COLS - 1);
-    vga_putchar_at('*', corner_attr, 18, 0);
-    vga_putchar_at('*', corner_attr, 18, VGA_COLS - 1);
+        vga_putchar_at(press[i], press_attr, 22, press_col + i);
 }
 
-/* busy-loop delay so the banner stays visible even without a keypress read */
 static void delay_ticks(uint32_t ticks) {
     uint32_t start = timer_ticks;
     while (timer_ticks - start < ticks)
         __asm__ volatile ("hlt");
+}
+
+static void show_loading_animation(void) {
+    int bar_width = 50; // Width of the loading bar in characters
+    int row = 14;       // Place in the middle of the screen
+    int start_col = (VGA_COLS - bar_width - 2) / 2;
+
+    /* --- Theme Color Definitions --- */
+    uint8_t c_bg      = current_theme ? VGA_BLACK      : VGA_WHITE;
+    uint8_t c_bracket = current_theme ? VGA_WHITE      : VGA_BLACK;
+    uint8_t c_fill    = current_theme ? VGA_RED        : VGA_BLUE;
+    uint8_t c_empty   = current_theme ? VGA_LIGHT_GREY : VGA_DARK_GREY;
+    uint8_t c_text    = current_theme ? VGA_WHITE      : VGA_BLACK;
+
+    uint8_t attr_bracket = vga_attr(c_bracket, c_bg);
+    uint8_t attr_fill    = vga_attr(c_fill, c_bg);
+    uint8_t attr_empty   = vga_attr(c_empty, c_bg);
+    uint8_t attr_text    = vga_attr(c_text, c_bg);
+
+    uint8_t bg_fill = vga_attr(c_bg, c_bg);
+    for (int r = 0; r < VGA_ROWS; r++) {
+        for (int c = 0; c < VGA_COLS; c++) {
+            vga_buf[r * VGA_COLS + c] = vga_cell(' ', bg_fill);
+        }
+    }
+
+    char *msg = "Initializing OS...";
+    int msg_col = (VGA_COLS - (int)k_strlen(msg)) / 2;
+    for (int i = 0; msg[i]; i++) {
+        vga_putchar_at(msg[i], attr_text, row - 2, msg_col + i);
+    }
+
+    // Draw the initial empty loading bar
+    vga_putchar_at('[', attr_bracket, row, start_col);
+    for (int i = 0; i < bar_width; i++) {
+        // '-' character for empty space
+        vga_putchar_at('-', attr_empty, row, start_col + 1 + i);
+    }
+    vga_putchar_at(']', attr_bracket, row, start_col + 1 + bar_width);
+
+    // Animate the bar filling up
+    for (int i = 0; i < bar_width; i++) {
+        vga_putchar_at('\xDB', attr_fill, row, start_col + 1 + i);
+
+        // Calculate progress percentage to determine speed
+        int percentage = (i * 100) / bar_width;
+
+        if (percentage < 50) {
+            delay_ticks(1);   // 1 tick * 55ms 
+        } else if (percentage < 70) {
+            msg = "Starting terminal session...";
+            msg_col = (VGA_COLS - (int)k_strlen(msg)) / 2;
+            for (int i = 0; msg[i]; i++) {
+                vga_putchar_at(msg[i], attr_text, row - 2, msg_col + i);
+            }
+            delay_ticks(3);   // 3 ticks * 55ms
+        } else if (percentage < 90) {
+            delay_ticks(4);  // 4 ticks * 55ms
+        } else {
+            msg = "      Almost there...       ";
+            msg_col = (VGA_COLS - (int)k_strlen(msg)) / 2;
+            for (int i = 0; msg[i]; i++) {
+                vga_putchar_at(msg[i], attr_text, row - 2, msg_col + i);
+            }
+            delay_ticks(9);  // 9 ticks * 55ms
+        }
+    }
+
+    msg = "         Welcome...         ";
+    int shell_msg_col = (VGA_COLS - (int)k_strlen(msg)) / 2;
+    for (int i = 0; msg[i]; i++) {
+        vga_putchar_at(msg[i], attr_text, row - 2, shell_msg_col + i);
+    }
+    delay_ticks(18 * 1);
+}
+
+static void show_boot_menu(void) {
+    draw_banner();
+
+    while (1) {
+        uint8_t key = kb_getchar(); 
+
+        if (key == ' ') {
+            current_theme = !current_theme; 
+            draw_banner(); 
+        } 
+        else if (key != 0) {
+            break; 
+        }
+    }
 }
 
 /* =========================================================================
@@ -820,7 +920,7 @@ static void delay_ticks(uint32_t ticks) {
  * ========================================================================= */
 
 #define CMD_BUF_SIZE 128
-#define HISTORY_MAX 10
+#define HISTORY_MAX 20
 
 static char cmd_buf[CMD_BUF_SIZE];
 static int  cmd_len = 0;
@@ -833,11 +933,11 @@ static int history_idx = 0;
 /* Print the prompt */
 static void shell_prompt(void) {
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    vga_puts("root");
+    vga_puts("[root");
     vga_set_color(VGA_WHITE, VGA_BLACK);
-    vga_puts("@kernel");
+    vga_puts("@kernel ");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
-    vga_puts(":~$ ");
+    vga_puts("~]$ ");
     vga_set_color(VGA_WHITE, VGA_BLACK);
 }
 
@@ -886,10 +986,8 @@ static void cmd_help(void) {
 }
 
 static void cmd_about(void) {
-    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("\n  OS - A Minimal x86 Kernel\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
-    vga_puts("  Written in C and x86 assembly.\n");
+    vga_puts("  Kernel written in C and x86 assembly.\n");
     vga_puts("  Architecture : IA-32 (32-bit protected mode)\n");
     vga_puts("  Boot         : Stage-1 BIOS bootloader (MBR)\n");
     vga_puts("  Video        : VGA text mode 80x25\n");
@@ -904,13 +1002,13 @@ static void cmd_uptime(void) {
     k_itoa(secs, buf);
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("\n  Uptime: ");
-    vga_set_color(VGA_GREEN, VGA_BLACK);
+    vga_set_color(VGA_CYAN, VGA_BLACK);
     vga_puts(buf);
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts(" seconds\n\n");
 }
 
-static void cmd_color(void) {
+static void cmd_colors(void) {
     vga_puts("\n  VGA colour palette:\n  ");
     const char *names[] = {
         "BLK","BLU","GRN","CYN","RED","MAG","BRN","LGY",
@@ -1004,7 +1102,7 @@ static void shell_run(void) {
             } else if (c == '\t') {
                 /* --- TAB COMPLETION --- */
                 if (cmd_len > 0) {
-                    const char *commands[] = {"help", "clear", "about", "uptime", "color", "reboot", "exit", "halt", "echo"};
+                    const char *commands[] = {"help", "clear", "about", "uptime", "colors", "reboot", "exit", "halt", "echo"};
                     int num_cmds = 9;
                     int match_idx = -1;
                     int matches = 0;
@@ -1070,8 +1168,8 @@ static void shell_run(void) {
             cmd_about();
         } else if (k_strcmp(cmd_buf, "uptime") == 0) {
             cmd_uptime();
-        } else if (k_strcmp(cmd_buf, "color") == 0) {
-            cmd_color();
+        } else if (k_strcmp(cmd_buf, "colors") == 0) {
+            cmd_colors();
         } else if (k_strcmp(cmd_buf, "reboot") == 0) {
             cmd_reboot();
         } else if (k_strcmp(cmd_buf, "exit") == 0) {
@@ -1084,9 +1182,9 @@ static void shell_run(void) {
             cmd_echo(cmd_buf);
         } else {
             vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-            vga_puts("\n  Unknown command: '");
+            vga_puts("\n  Unknown command: ");
             vga_puts(cmd_buf);
-            vga_puts("'  (type 'help' for a list)\n\n");
+            vga_puts(" (type 'help' for a list)\n\n");
             vga_set_color(VGA_WHITE, VGA_BLACK);
         }
     }
@@ -1097,34 +1195,17 @@ static void shell_run(void) {
  * ========================================================================= */
 
 __attribute__((section(".text.boot"))) void kernel_main(void) {
-    /*
-     * 1. Remap the PIC so hardware IRQs don't overlap CPU exception vectors.
-     *    Must happen BEFORE installing the IDT.
-     */
     pic_remap();
 
-    /*
-     * 2. Install all 256 IDT gates and load the IDTR register.
-     */
     idt_install();
 
-    /*
-     * 3. Enable hardware interrupts.  From this point the timer and keyboard
-     *    ISRs will fire asynchronously.
-     */
     __asm__ volatile ("sti");
 
-    /*
-     * 4. Draw the animated boot banner.
-     *    Timer interrupts are now ticking so delay_ticks() works.
-     */
-    draw_banner();
-    delay_ticks(18 * 2);        /* show splash for ~2 seconds */
-    kb_getchar();               /* also wait for a key press */
+    show_boot_menu();
+    show_loading_animation();
+    //delay_ticks(18 * 2);        /* show splash for ~2 seconds */
+    //kb_getchar();               /* also wait for a key press */
 
-    /*
-     * 5. Switch to the shell screen.
-     */
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_clear();
 
@@ -1134,11 +1215,7 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
     vga_puts("Type 'help' for a list of commands.\n\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
 
-    /*
-     * 6. Enter the interactive shell loop — never returns.
-     */
     shell_run();
 
-    /* Should never reach here */
     __asm__ volatile ("cli; hlt");
 }
