@@ -60,3 +60,4 @@ dkms.conf
 .idea/
 help/
 build/
+*.zip
