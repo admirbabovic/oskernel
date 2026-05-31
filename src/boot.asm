@@ -68,7 +68,7 @@ msg_disk_error: db 'Disk read error!', 13, 10, 0
 
 gdt_start:
 
-; --- Null Descriptor (required by CPU - must be all zeros) ---
+; Null Descriptor (required by CPU - must be all zeros)
 gdt_null:
     dd 0x00000000
     dd 0x00000000
