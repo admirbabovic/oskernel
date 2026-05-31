@@ -1,23 +1,4 @@
-/*
- * kernel.c — MyOS Kernel
- *
- * A bare-metal x86 kernel that runs in 32-bit protected mode.
- * Features:
- *   - VGA text-mode driver (colours, cursor control, scrolling)
- *   - GDT already set up by the bootloader
- *   - IDT with 256 entries wired to ISR stubs
- *   - PIC remapping (IRQs 0-15 → INT 0x20-0x2F)
- *   - Timer interrupt (IRQ 0) — ticks counter
- *   - Keyboard interrupt (IRQ 1) — US-QWERTY scancode → ASCII
- *   - CPU-exception handlers (divide-by-zero, page fault, etc.)
- *   - Simple shell (type commands, press Enter)
- *   - Built-in commands: help, clear, about, uptime, reboot, halt, echo
- *   - Animated boot banner drawn with VGA colours
- */
-
-/* =========================================================================
- * 0.  COMPILER BUILT-INS & TYPE DEFINITIONS
- * ========================================================================= */
+// COMPILER BUILT-INS & TYPE DEFINITIONS
 
 typedef unsigned char      uint8_t;
 typedef unsigned short     uint16_t;
@@ -31,17 +12,9 @@ typedef uint32_t size_t;
 
 #define NULL ((void*)0)
 
-/* =========================================================================
- * 1.  PORT I/O HELPERS
- * ========================================================================= */
+// I/O PORT HELPERS
 
-/*
- * outb — write one byte to an x86 I/O port.
- * The "volatile" asm prevents the compiler reordering or removing the
- * instruction.  "N" means the port must be a compile-time constant 0-255;
- * "d" means the DX register for wider ranges.
- */
-static inline void outb(uint16_t port, uint8_t value) {
+static inline void outb(uint16_t port, uint8_t value) { // write one byte to an x86 I/O port
     __asm__ volatile ("outb %1, %0" : : "dN"(port), "a"(value));
 }
 
@@ -49,32 +22,24 @@ static inline void outw(uint16_t port, uint16_t value) {
     __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
 }
 
-/* inb — read one byte from an x86 I/O port. */
-static inline uint8_t inb(uint16_t port) {
+static inline uint8_t inb(uint16_t port) { // read one byte from an x86 I/O port
     uint8_t ret;
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "dN"(port));
     return ret;
 }
 
-/* io_wait — tiny delay by writing to an unused port; used after PIC writes. */
-static inline void io_wait(void) {
+static inline void io_wait(void) { // tiny delay by writing to an unused port
     outb(0x80, 0);
 }
 
-/* =========================================================================
- * 2.  VGA TEXT-MODE DRIVER
- * ========================================================================= */
 
-/*
- * The VGA text-mode frame-buffer lives at physical address 0xB8000.
- * Each cell is 2 bytes: [attribute | character].
- * Attribute byte: bits 7-4 = background colour, bits 3-0 = foreground colour.
- */
-#define VGA_ADDRESS  0xB8000
+// VGA TEXT-MODE DRIVER
+
+#define VGA_ADDRESS  0xB8000 // physical place in memory where frame-buffer lives
 #define VGA_COLS     80
 #define VGA_ROWS     25
 
-/* Standard VGA colour indices */
+// Standard VGA colour indices
 typedef enum {
     VGA_BLACK         = 0,
     VGA_BLUE          = 1,
@@ -94,29 +59,26 @@ typedef enum {
     VGA_WHITE         = 15,
 } vga_color_t;
 
-/* Combine foreground + background into a single attribute byte */
+// Combines foreground and background into a single attribute byte
 static inline uint8_t vga_attr(vga_color_t fg, vga_color_t bg) {
     return (uint8_t)((bg << 4) | fg);
 }
 
-/* Pack character + attribute into a 16-bit VGA cell */
+// Packs character and attribute into a 16-bit VGA cell
 static inline uint16_t vga_cell(char c, uint8_t attr) {
     return (uint16_t)((uint16_t)attr << 8 | (uint8_t)c);
 }
 
-/* Global terminal state */
 static uint16_t *vga_buf    = (uint16_t *)VGA_ADDRESS;
-static int       term_col   = 0;   /* current cursor column  */
-static int       term_row   = 0;   /* current cursor row     */
-static uint8_t   term_attr  = 0;   /* current attribute byte */
+static int       term_col   = 0;   // current cursor column
+static int       term_row   = 0;   // current cursor row
+static uint8_t   term_attr  = 0;   // current attribute byte
 
-/* vga_set_color — update the active foreground/background pair */
-void vga_set_color(vga_color_t fg, vga_color_t bg) {
+void vga_set_color(vga_color_t fg, vga_color_t bg) { // update the active foreground/background pair
     term_attr = vga_attr(fg, bg);
 }
 
-/* vga_clear — fill every cell with spaces using the current attribute */
-void vga_clear(void) {
+void vga_clear(void) { // fill every cell with spaces using the current attribute
     for (int r = 0; r < VGA_ROWS; r++)
         for (int c = 0; c < VGA_COLS; c++)
             vga_buf[r * VGA_COLS + c] = vga_cell(' ', term_attr);
@@ -124,12 +86,7 @@ void vga_clear(void) {
     term_row = 0;
 }
 
-/*
- * vga_update_cursor — move the hardware text cursor.
- * The VGA CRTC registers 0x0E/0x0F hold the 16-bit cursor position.
- * We reach them through the CRTC index port (0x3D4) and data port (0x3D5).
- */
-void vga_update_cursor(void) {
+void vga_update_cursor(void) { // move the hardware text cursor
     uint16_t pos = (uint16_t)(term_row * VGA_COLS + term_col);
     outb(0x3D4, 0x0F);
     outb(0x3D5, (uint8_t)(pos & 0xFF));
@@ -137,37 +94,25 @@ void vga_update_cursor(void) {
     outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
 }
 
-/*
- * vga_scroll — shift every row up by one line, blank the last row.
- * Called when the cursor moves past row 24.
- */
-static void vga_scroll(void) {
-    /* Copy row N to row N-1 */
+static void vga_scroll(void) { // shift every row up by one line, blank the last row
     for (int r = 1; r < VGA_ROWS; r++)
         for (int c = 0; c < VGA_COLS; c++)
             vga_buf[(r - 1) * VGA_COLS + c] = vga_buf[r * VGA_COLS + c];
 
-    /* Blank the last row */
     for (int c = 0; c < VGA_COLS; c++)
         vga_buf[(VGA_ROWS - 1) * VGA_COLS + c] = vga_cell(' ', term_attr);
 
-    /* Move cursor to last row, same column */
     term_row = VGA_ROWS - 1;
 }
 
-/*
- * vga_putchar — place a single character at the current cursor position,
- * handling newline, carriage-return, backspace and automatic scrolling.
- */
-void vga_putchar(char c) {
+void vga_putchar(char c) { // place a single character at the current cursor position
     if (c == '\n') {
         term_col = 0;
         term_row++;
     } else if (c == '\r') {
         term_col = 0;
     } else if (c == '\b') {
-        /* Backspace: erase the character to the left */
-        if (term_col > 0) {
+        if (term_col > 0) { // Backspace erases the character to the left
             term_col--;
             vga_buf[term_row * VGA_COLS + term_col] = vga_cell(' ', term_attr);
         }
@@ -186,20 +131,17 @@ void vga_putchar(char c) {
     vga_update_cursor();
 }
 
-/* vga_puts — write a NUL-terminated string */
-void vga_puts(const char *s) {
+void vga_puts(const char *s) { // write a NUL-terminated string
     while (*s)
         vga_putchar(*s++);
 }
 
-/* vga_putchar_at — write a character directly at row/col without moving cursor */
-void vga_putchar_at(char c, uint8_t attr, int row, int col) {
+void vga_putchar_at(char c, uint8_t attr, int row, int col) { // writes a character directly at row/col without moving cursor
     vga_buf[row * VGA_COLS + col] = vga_cell(c, attr);
 }
 
-/* =========================================================================
- * 3.  MINIMAL STRING / NUMBER UTILITIES  (no libc available)
- * ========================================================================= */
+
+// MINIMAL STRING / NUMBER UTILITIES
 
 size_t k_strlen(const char *s) {
     size_t n = 0;
@@ -224,8 +166,7 @@ char *k_strcpy(char *dst, const char *src) {
     return dst;
 }
 
-/* k_itoa — convert unsigned 32-bit integer to decimal string in buf */
-void k_itoa(uint32_t val, char *buf) {
+void k_itoa(uint32_t val, char *buf) { // convert unsigned 32-bit integer to decimal string in buf
     if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
     char tmp[12]; int i = 0;
     while (val) { tmp[i++] = '0' + val % 10; val /= 10; }
@@ -234,93 +175,54 @@ void k_itoa(uint32_t val, char *buf) {
     buf[j] = '\0';
 }
 
-/* k_memset — fill n bytes of dst with value c */
-void *k_memset(void *dst, int c, size_t n) {
+void *k_memset(void *dst, int c, size_t n) { // fill n bytes of dst with value c
     unsigned char *p = (unsigned char *)dst;
     while (n--) *p++ = (unsigned char)c;
     return dst;
 }
 
-/* =========================================================================
- * 4.  GLOBAL DESCRIPTOR TABLE  (minimal re-declaration for reference)
- * ========================================================================= */
-/*
- * The GDT was already set up by boot.asm.  We only need its layout to
- * understand segment selectors (0x08 = code, 0x10 = data).  No code needed.
- */
+// INTERRUPT DESCRIPTOR TABLE  (IDT)
 
-/* =========================================================================
- * 5.  INTERRUPT DESCRIPTOR TABLE  (IDT)
- * ========================================================================= */
-
-/*
- * An IDT gate (interrupt descriptor) is 8 bytes:
- *   offset_lo  [15:0]  — lower 16 bits of ISR address
- *   selector   [31:16] — code segment selector (0x08)
- *   zero       [39:32] — always 0
- *   type_attr  [47:40] — gate type + DPL + present bit
- *   offset_hi  [63:48] — upper 16 bits of ISR address
- */
 typedef struct __attribute__((packed)) {
-    uint16_t offset_lo;   /* ISR address bits 15:0  */
-    uint16_t selector;    /* Code segment selector  */
-    uint8_t  zero;        /* Always 0               */
-    uint8_t  type_attr;   /* Gate type / DPL / P    */
-    uint16_t offset_hi;   /* ISR address bits 31:16 */
+    uint16_t offset_lo;
+    uint16_t selector;
+    uint8_t  zero;
+    uint8_t  type_attr;
+    uint16_t offset_hi;
 } idt_entry_t;
 
-/*
- * IDTR — the 6-byte register value loaded with LIDT.
- * limit = sizeof(idt) - 1, base = address of idt array.
- */
 typedef struct __attribute__((packed)) {
     uint16_t limit;
     uint32_t base;
 } idt_ptr_t;
 
-/* 256 IDT entries — one per possible interrupt/exception vector */
-static idt_entry_t idt[256];
+static idt_entry_t idt[256]; // one IDT entry per possible interrupt/exception vector
 static idt_ptr_t   idt_ptr;
 
-/*
- * idt_set_gate — fill one IDT entry.
- * handler : address of the ISR function
- * selector: code segment (0x08 from the GDT)
- * flags   : 0x8E = 32-bit interrupt gate, kernel privilege
- */
+// fill one IDT entry
 static void idt_set_gate(uint8_t num, uint32_t handler,
                          uint16_t selector, uint8_t flags) {
-    idt[num].offset_lo = (uint16_t)(handler & 0xFFFF);
-    idt[num].selector  = selector;
-    idt[num].zero      = 0;
-    idt[num].type_attr = flags;
-    idt[num].offset_hi = (uint16_t)((handler >> 16) & 0xFFFF);
+    idt[num].offset_lo = (uint16_t)(handler & 0xFFFF); // lower 16 bits of ISR address (0-15)
+    idt[num].selector  = selector; // code segment selector (0x08) (16-31)
+    idt[num].zero      = 0; // always 0 (32-39)
+    idt[num].type_attr = flags; // gate type / DPL / present bit (40-47)
+    idt[num].offset_hi = (uint16_t)((handler >> 16) & 0xFFFF); // upper 16 bits of ISR address (48-63)
 }
 
-/* =========================================================================
- * 6.  ISR STUBS — generic C-level exception/interrupt handler
- * ========================================================================= */
+// ISR STUBS - C-level exception/interrupt handler
 
-/*
- * The CPU pushes these registers on the stack before calling our ISR.
- * We manually push the rest in the stub so we get a consistent frame.
- */
 typedef struct __attribute__((packed)) {
     uint32_t ds;
-    uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax; /* pusha order  */
-    uint32_t int_no, err_code;                         /* pushed by stub */
-    uint32_t eip, cs, eflags, useresp, ss;            /* pushed by CPU  */
+    uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax;    // pusha order
+    uint32_t int_no, err_code;  // pushed by stub
+    uint32_t eip, cs, eflags, useresp, ss;  // pushed by CPU
 } registers_t;
 
-/*
- * Forward-declare the assembly stubs.  They are defined later using
- * __attribute__((naked)) so we control every push/pop exactly.
- */
 #define ISR_NOERR(n) void isr##n(void);
 #define ISR_ERR(n)   void isr##n(void);
 #define IRQ(n, v)    void irq##n(void);
 
-/* CPU exceptions 0–31 */
+// CPU exceptions 0–31
 ISR_NOERR(0)  ISR_NOERR(1)  ISR_NOERR(2)  ISR_NOERR(3)
 ISR_NOERR(4)  ISR_NOERR(5)  ISR_NOERR(6)  ISR_NOERR(7)
 ISR_ERR(8)    ISR_NOERR(9)  ISR_ERR(10)   ISR_ERR(11)
@@ -330,40 +232,36 @@ ISR_NOERR(20) ISR_NOERR(21) ISR_NOERR(22) ISR_NOERR(23)
 ISR_NOERR(24) ISR_NOERR(25) ISR_NOERR(26) ISR_NOERR(27)
 ISR_NOERR(28) ISR_NOERR(29) ISR_ERR(30)   ISR_NOERR(31)
 
-/* Hardware IRQs 0–15 mapped to vectors 0x20-0x2F */
+// Hardware IRQs 0–15 mapped to vectors 0x20-0x2F
 IRQ(0, 32)  IRQ(1, 33)  IRQ(2, 34)  IRQ(3, 35)
 IRQ(4, 36)  IRQ(5, 37)  IRQ(6, 38)  IRQ(7, 39)
 IRQ(8, 40)  IRQ(9, 41)  IRQ(10, 42) IRQ(11, 43)
 IRQ(12, 44) IRQ(13, 45) IRQ(14, 46) IRQ(15, 47)
 
-/*
- * isr_handler — called by all ISR stubs for CPU exceptions.
- * Prints a panic message and halts.
- */
 static const char *exception_names[] = {
-    "Division By Zero",         /* 0  */
-    "Debug",                    /* 1  */
-    "Non Maskable Interrupt",   /* 2  */
-    "Breakpoint",               /* 3  */
-    "Into Detected Overflow",   /* 4  */
-    "Out of Bounds",            /* 5  */
-    "Invalid Opcode",           /* 6  */
-    "No Coprocessor",           /* 7  */
-    "Double Fault",             /* 8  */
-    "Coprocessor Segment Over", /* 9  */
-    "Bad TSS",                  /* 10 */
-    "Segment Not Present",      /* 11 */
-    "Stack Fault",              /* 12 */
-    "General Protection Fault", /* 13 */
-    "Page Fault",               /* 14 */
-    "Unknown Interrupt",        /* 15 */
-    "FPU Fault",                /* 16 */
-    "Alignment Check",          /* 17 */
-    "Machine Check",            /* 18 */
-    "SIMD Fault",               /* 19 */
+    "Division By Zero",         // 0
+    "Debug",                    // 1
+    "Non Maskable Interrupt",   // 2
+    "Breakpoint",               // 3
+    "Into Detected Overflow",   // 4
+    "Out of Bounds",            // 5
+    "Invalid Opcode",           // 6
+    "No Coprocessor",           // 7
+    "Double Fault",             // 8
+    "Coprocessor Segment Over", // 9
+    "Bad TSS",                  // 10
+    "Segment Not Present",      // 11
+    "Stack Fault",              // 12
+    "General Protection Fault", // 13
+    "Page Fault",               // 14
+    "Unknown Interrupt",        // 15
+    "FPU Fault",                // 16
+    "Alignment Check",          // 17
+    "Machine Check",            // 18
+    "SIMD Fault",               // 19
 };
 
-void isr_handler(registers_t *regs) {
+void isr_handler(registers_t *regs) { // called by all ISR stubs for CPU exceptions - prints a panic message and halts
     vga_set_color(VGA_WHITE, VGA_RED);
     vga_puts("\n\n  *** KERNEL PANIC ***\n");
     vga_puts("  Exception: ");
@@ -375,83 +273,66 @@ void isr_handler(registers_t *regs) {
     __asm__ volatile ("cli; hlt");
 }
 
-/* =========================================================================
- * 7.  PIC — PROGRAMMABLE INTERRUPT CONTROLLER  (8259A)
- * ========================================================================= */
+// PIC - PROGRAMMABLE INTERRUPT CONTROLLER
 
-/*
- * The legacy 8259A PIC fires IRQs 0-7 at INT 0x08-0x0F by default,
- * which clashes with CPU exception vectors.  We remap them to 0x20-0x2F.
- *
- * Master PIC: command 0x20, data 0x21
- * Slave  PIC: command 0xA0, data 0xA1
- */
 #define PIC1_CMD  0x20
 #define PIC1_DATA 0x21
 #define PIC2_CMD  0xA0
 #define PIC2_DATA 0xA1
-#define PIC_EOI   0x20  /* End-Of-Interrupt command */
+#define PIC_EOI   0x20  // End-Of-Interrupt command
 
 static void pic_remap(void) {
-    /* Save current masks */
+    // Save current masks
     uint8_t a1 = inb(PIC1_DATA);
     uint8_t a2 = inb(PIC2_DATA);
 
-    /* Start init sequence in cascade mode (ICW1) */
+    // Start init sequence in cascade mode
     outb(PIC1_CMD, 0x11); io_wait();
     outb(PIC2_CMD, 0x11); io_wait();
 
-    /* ICW2: new vector offsets */
-    outb(PIC1_DATA, 0x20); io_wait(); /* IRQ0 → INT 32 (0x20) */
-    outb(PIC2_DATA, 0x28); io_wait(); /* IRQ8 → INT 40 (0x28) */
+    // ICW2: new vector offsets
+    outb(PIC1_DATA, 0x20); io_wait();
+    outb(PIC2_DATA, 0x28); io_wait();
 
-    /* ICW3: master has slave on IRQ2; slave knows its cascade identity */
-    outb(PIC1_DATA, 4); io_wait();  /* bit 2 = IRQ2 line        */
-    outb(PIC2_DATA, 2); io_wait();  /* cascade identity = 2      */
+    // ICW3
+    outb(PIC1_DATA, 4); io_wait();
+    outb(PIC2_DATA, 2); io_wait();
 
-    /* ICW4: 8086 mode */
+    // ICW4: 8086 mode
     outb(PIC1_DATA, 0x01); io_wait();
     outb(PIC2_DATA, 0x01); io_wait();
 
-    /* Restore masks */
+    // Restore masks
     outb(PIC1_DATA, a1);
     outb(PIC2_DATA, a2);
 }
 
-/* Send End-Of-Interrupt to the appropriate PIC(s) */
+// Send End-Of-Interrupt to the appropriate PIC
 static void pic_eoi(uint8_t irq) {
     if (irq >= 8)
         outb(PIC2_CMD, PIC_EOI);
     outb(PIC1_CMD, PIC_EOI);
 }
 
-/* =========================================================================
- * 8.  TIMER (IRQ 0)
- * ========================================================================= */
+// TIMER (IRQ 0) - The default PIT rate is ~18.2 Hz
 
 static volatile uint32_t timer_ticks = 0;
 
-/*
- * irq_handler_timer — called every time the PIT fires.
- * The default PIT rate is ~18.2 Hz; we just count ticks here.
- */
-void irq_handler_timer(void) {
+void irq_handler_timer(void) { // called every time the PIT fires
     timer_ticks++;
     pic_eoi(0);
 }
 
-/* uptime_seconds — approximate seconds since boot (18 ticks ≈ 1 s) */
+// uptime_seconds - approximate seconds since boot (18 ticks ~1s)
 uint32_t uptime_seconds(void) {
     return timer_ticks / 18;
 }
 
-/* =========================================================================
- * 9.  KEYBOARD (IRQ 1) — US-QWERTY SCANCODE SET 1
- * ========================================================================= */
+// KEYBOARD (IRQ 1) - US-QWERTY SCANCODE SET 1
 
-#define KB_DATA 0x60  /* PS/2 keyboard data port */
+#define KB_DATA 0x60  // PS/2 keyboard data port
 
-/* Scancode set 1 → ASCII (lowercase, unshifted).  0 = no printable char. */
+// Scancode set 1 = ASCII (lowercase, unshifted) and  0 = no printable char.
 static const char kb_map[128] = {
     0,   27,  '1', '2', '3', '4', '5', '6', '7', '8', /* 0x00–0x09 */
     '9', '0', '-', '=', '\b', '\t',                    /* 0x0A–0x0F */
@@ -466,7 +347,7 @@ static const char kb_map[128] = {
      '\x11', 0, 0, 0, 0, 0, 0, 0, '\x12',              /* 0x48-0x50 (Up=0x48, Down=0x50) */
 };
 
-/* Shifted scancode → ASCII */
+// Shifted scancode - ASCII
 static const char kb_map_shift[128] = {
     0,   27,  '!', '@', '#', '$', '%', '^', '&', '*',
     '(', ')', '_', '+', '\b', '\t',
@@ -481,47 +362,38 @@ static const char kb_map_shift[128] = {
     '\x11', 0, 0, 0, 0, 0, 0, 0, '\x12',
 };
 
-/* Key state */
-static int kb_shift = 0;     /* non-zero while shift is held */
+// Key state
+static int kb_shift = 0;
 
-/*
- * Ring-buffer (circular queue) for keyboard input.
- * The interrupt handler writes here; the shell reads from here.
- */
+// Ring-buffer (circular queue) for keyboard input.
 #define KB_BUF_SIZE 256
 static volatile char     kb_buf[KB_BUF_SIZE];
-static volatile uint32_t kb_head = 0;  /* write index */
-static volatile uint32_t kb_tail = 0;  /* read  index */
+static volatile uint32_t kb_head = 0;  // write index
+static volatile uint32_t kb_tail = 0;  // read  index
 
 static void kb_buf_push(char c) {
     uint32_t next = (kb_head + 1) % KB_BUF_SIZE;
-    if (next != kb_tail) {          /* drop if full */
+    if (next != kb_tail) {
         kb_buf[kb_head] = c;
         kb_head = next;
     }
 }
 
-/* kb_getchar — blocking read: spin until a character is available */
-char kb_getchar(void) {
+char kb_getchar(void) { // blocking read - spin until a character is available
     while (kb_head == kb_tail)
-        __asm__ volatile ("hlt"); /* sleep until next interrupt */
+        __asm__ volatile ("hlt");
     char c = kb_buf[kb_tail];
     kb_tail = (kb_tail + 1) % KB_BUF_SIZE;
     return c;
 }
 
-/*
- * irq_handler_keyboard — called on every key press/release.
- * Scancode bit 7 = 1 means key released; bit 7 = 0 means key pressed.
- */
-void irq_handler_keyboard(void) {
+void irq_handler_keyboard(void) { // called on every key press/release
     uint8_t scancode = inb(KB_DATA);
 
-    /* Detect shift press/release (scancodes 0x2A, 0x36 and their breaks) */
+    // Detect shift press/release
     if (scancode == 0x2A || scancode == 0x36) { kb_shift = 1; }
     else if (scancode == 0xAA || scancode == 0xB6) { kb_shift = 0; }
     else if (!(scancode & 0x80)) {
-        /* Key-pressed event (not a key-release) */
         char c = kb_shift ? kb_map_shift[scancode] : kb_map[scancode];
         if (c) kb_buf_push(c);
     }
@@ -529,39 +401,25 @@ void irq_handler_keyboard(void) {
     pic_eoi(1);
 }
 
-/* =========================================================================
- * 10. IRQ DISPATCH — called by all IRQ stubs
- * ========================================================================= */
+// IRQ DISPATCH - called by all IRQ stubs
 
 void irq_handler(registers_t *regs) {
-    switch (regs->int_no - 32) {   /* subtract PIC offset to get IRQ number */
+    switch (regs->int_no - 32) {   // subtract PIC offset to get IRQ number
         case 0:  irq_handler_timer();    break;
         case 1:  irq_handler_keyboard(); break;
-        /* IRQs 2–15 are unhandled; still must send EOI */
+
         default: pic_eoi((uint8_t)(regs->int_no - 32)); break;
     }
 }
 
-/* =========================================================================
- * 11. ISR/IRQ STUB IMPLEMENTATIONS  (naked functions = no function prologue)
- * ========================================================================= */
-
-/*
- * Each stub must:
- *   1. Push a fake error code (if the CPU doesn't) to keep the frame uniform.
- *   2. Push the interrupt number.
- *   3. Save all general-purpose registers (pusha).
- *   4. Save the data-segment register and reload DS to kernel's data segment.
- *   5. Call the C handler.
- *   6. Restore everything in reverse and return with IRET.
- */
+// ISR/IRQ STUB IMPLEMENTATIONS
 
 #define STUB_ISR_NOERR(n) \
 __attribute__((naked)) void isr##n(void) { \
     __asm__ volatile ( \
         "cli\n" \
-        "push $0\n"        /* fake error code */ \
-        "push $" #n "\n"   /* interrupt number */ \
+        "push $0\n" \
+        "push $" #n "\n" \
         "pusha\n" \
         "mov %%ds, %%ax\n" \
         "push %%eax\n" \
@@ -580,7 +438,7 @@ __attribute__((naked)) void isr##n(void) { \
         "mov %%ax, %%fs\n" \
         "mov %%ax, %%gs\n" \
         "popa\n" \
-        "add $8, %%esp\n" /* pop int_no + err_code */ \
+        "add $8, %%esp\n" \
         "iret\n" \
         : : : "memory" \
     ); \
@@ -590,7 +448,6 @@ __attribute__((naked)) void isr##n(void) { \
 __attribute__((naked)) void isr##n(void) { \
     __asm__ volatile ( \
         "cli\n" \
-        /* CPU already pushed error code */ \
         "push $" #n "\n" \
         "pusha\n" \
         "mov %%ds, %%ax\n" \
@@ -646,7 +503,7 @@ __attribute__((naked)) void irq##n(void) { \
     ); \
 }
 
-/* Instantiate all stubs */
+// Instantiate all stubs
 STUB_ISR_NOERR(0)  STUB_ISR_NOERR(1)  STUB_ISR_NOERR(2)  STUB_ISR_NOERR(3)
 STUB_ISR_NOERR(4)  STUB_ISR_NOERR(5)  STUB_ISR_NOERR(6)  STUB_ISR_NOERR(7)
 STUB_ISR_ERR(8)    STUB_ISR_NOERR(9)  STUB_ISR_ERR(10)   STUB_ISR_ERR(11)
@@ -661,9 +518,7 @@ STUB_IRQ(4,  36)  STUB_IRQ(5,  37)  STUB_IRQ(6,  38)  STUB_IRQ(7,  39)
 STUB_IRQ(8,  40)  STUB_IRQ(9,  41)  STUB_IRQ(10, 42)  STUB_IRQ(11, 43)
 STUB_IRQ(12, 44)  STUB_IRQ(13, 45)  STUB_IRQ(14, 46)  STUB_IRQ(15, 47)
 
-/* =========================================================================
- * 12. IDT INSTALLATION
- * ========================================================================= */
+// IDT INSTALLATION
 
 static void idt_install(void) {
     idt_ptr.limit = sizeof(idt) - 1;
@@ -671,7 +526,7 @@ static void idt_install(void) {
 
     k_memset(&idt, 0, sizeof(idt));
 
-    /* CPU exceptions 0–19 */
+    // CPU exceptions 0–19
     idt_set_gate(0,  (uint32_t)isr0,  0x08, 0x8E);
     idt_set_gate(1,  (uint32_t)isr1,  0x08, 0x8E);
     idt_set_gate(2,  (uint32_t)isr2,  0x08, 0x8E);
@@ -705,7 +560,7 @@ static void idt_install(void) {
     idt_set_gate(30, (uint32_t)isr30, 0x08, 0x8E);
     idt_set_gate(31, (uint32_t)isr31, 0x08, 0x8E);
 
-    /* Hardware IRQs 0–15 → vectors 32–47 */
+    // Hardware IRQs 0–15 - vectors 32–47
     idt_set_gate(32, (uint32_t)irq0,  0x08, 0x8E);
     idt_set_gate(33, (uint32_t)irq1,  0x08, 0x8E);
     idt_set_gate(34, (uint32_t)irq2,  0x08, 0x8E);
@@ -723,19 +578,16 @@ static void idt_install(void) {
     idt_set_gate(46, (uint32_t)irq14, 0x08, 0x8E);
     idt_set_gate(47, (uint32_t)irq15, 0x08, 0x8E);
 
-    /* Load the IDT register */
+    // Load the IDT register
     __asm__ volatile ("lidt %0" : : "m"(idt_ptr));
 }
 
-/* =========================================================================
- * 13. BOOT SPLASH SCREEN
- * =========================================================================
- * 
- * Global theme state: 0 = Light Theme, 1 = Dark Theme */
+// BOOT SPLASH SCREEN
+
 int current_theme = 0;
 
 static void draw_banner(void) {
-    /* --- Theme Color Definitions --- */
+
     uint8_t c_bg     = current_theme ? VGA_BLACK      : VGA_WHITE;
     uint8_t c_fill   = current_theme ? VGA_BLACK      : VGA_LIGHT_GREY;
     uint8_t c_border = current_theme ? VGA_WHITE      : VGA_DARK_GREY;
@@ -744,18 +596,17 @@ static void draw_banner(void) {
     uint8_t c_dev    = current_theme ? VGA_LIGHT_RED  : VGA_RED;
     uint8_t c_prompt = current_theme ? VGA_LIGHT_GREY : VGA_MAGENTA;
 
-    /* Full-screen fill */
-    uint8_t bg = vga_attr(c_fill, c_bg);
+    uint8_t bg = vga_attr(c_fill, c_bg); // Full-screen fill
     for (int r = 0; r < VGA_ROWS; r++)
         for (int c = 0; c < VGA_COLS; c++)
             vga_buf[r * VGA_COLS + c] = vga_cell(' ', bg);
 
-    /* -- Row 1: top border -- */
+    // Row 1: top border
     uint8_t border_attr = vga_attr(c_border, c_bg);
     for (int c = 0; c < VGA_COLS; c++)
         vga_putchar_at('=', border_attr, 1, c);
 
-    /* -- Rows 3-7: logo text -- */
+    // Rows 3-7: logo text
     const char *logo[] = {
         "    /$$$$$$   /$$$$$$   ",
         "   /$$__  $$ /$$__  $$  ",
@@ -776,18 +627,21 @@ static void draw_banner(void) {
                 vga_putchar_at(line[j], logo_attr, 3 + i, col);
     }
 
+    // Row 12: OS project tagline
     const char *tag = "[ OS kernel built built in C for CS304 course project ]";
     uint8_t tag_attr = vga_attr(c_text, c_bg);
     int tag_col = (VGA_COLS - (int)k_strlen(tag)) / 2;
     for (int i = 0; tag[i]; i++)
         vga_putchar_at(tag[i], tag_attr, 12, tag_col + i);
 
-    const char *ver = "OS v1.0.2  |  x86 32-bit Protected Mode  |  GCC Toolchain";
+    // Row 14: Current version and build features
+    const char *ver = "OS v1.0.5  |  x86 32-bit Protected Mode  |  GCC Toolchain";
     uint8_t ver_attr = vga_attr(c_text, c_bg);
     int ver_col = (VGA_COLS - (int)k_strlen(ver)) / 2;
     for (int i = 0; ver[i]; i++)
         vga_putchar_at(ver[i], ver_attr, 14, ver_col + i);
 
+    // Rows 16-17: Project team members
     const char *dev_frstln = "                            Dev team:                               ";
     uint8_t dev_frstln_attr = vga_attr(c_dev, c_bg);
     int dev_frstln_col = (VGA_COLS - (int)k_strlen(dev_frstln)) / 2;
@@ -800,9 +654,11 @@ static void draw_banner(void) {
     for (int i = 0; dev_scndln[i]; i++)
         vga_putchar_at(dev_scndln[i], dev_scndln_attr, 17, dev_scndln_col + i);
 
+    // Row 19: Bottom border
     for (int c = 0; c < VGA_COLS; c++)
         vga_putchar_at('=', border_attr, 19, c);
 
+    // Row 21: Theme switcher text
     char *toggle = "Press SPACE to toggle dark theme";
     if (current_theme == 1) {
         toggle = "Press SPACE to toggle light theme";
@@ -812,6 +668,7 @@ static void draw_banner(void) {
     for (int i = 0; toggle[i]; i++)
         vga_putchar_at(toggle[i], toggle_attr, 21, toggle_col + i);
 
+    // Row 22: Proceed to shell text
     const char *press = "Press any other key to continue to shell...";
     uint8_t press_attr = vga_attr(c_prompt, c_bg);
     int press_col = (VGA_COLS - (int)k_strlen(press)) / 2;
@@ -830,7 +687,6 @@ static void show_loading_animation(void) {
     int row = 14;       // Place in the middle of the screen
     int start_col = (VGA_COLS - bar_width - 2) / 2;
 
-    /* --- Theme Color Definitions --- */
     uint8_t c_bg      = current_theme ? VGA_BLACK      : VGA_WHITE;
     uint8_t c_bracket = current_theme ? VGA_WHITE      : VGA_BLACK;
     uint8_t c_fill    = current_theme ? VGA_RED        : VGA_BLUE;
@@ -915,9 +771,7 @@ static void show_boot_menu(void) {
     }
 }
 
-/* =========================================================================
- * 14. SHELL
- * ========================================================================= */
+// SHELL
 
 #define CMD_BUF_SIZE 128
 #define HISTORY_MAX 20
@@ -925,12 +779,12 @@ static void show_boot_menu(void) {
 static char cmd_buf[CMD_BUF_SIZE];
 static int  cmd_len = 0;
 
-/* History buffer */
+// History buffer
 static char history[HISTORY_MAX][CMD_BUF_SIZE];
 static int history_count = 0;
 static int history_idx = 0;
 
-/* Print the prompt */
+// Print the prompt
 static void shell_prompt(void) {
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
     vga_puts("[root");
@@ -941,8 +795,7 @@ static void shell_prompt(void) {
     vga_set_color(VGA_WHITE, VGA_BLACK);
 }
 
-/* ---- Built-in command implementations ---- */
-
+// Built-in command implementations
 static void cmd_help(void) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("\nBuilt-in Commands\n");
@@ -968,7 +821,7 @@ static void cmd_help(void) {
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("- Print text  (e.g. echo hello world)\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
-    vga_puts("  color   ");
+    vga_puts("  colors  ");
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("- Demo all 16 VGA colours\n");
     vga_set_color(VGA_YELLOW, VGA_BLACK);
@@ -1023,14 +876,10 @@ static void cmd_colors(void) {
     vga_puts("\n\n");
 }
 
-/*
- * cmd_echo — print everything after "echo " on the command line.
- * We walk past the first token (the command word itself).
- */
-static void cmd_echo(const char *line) {
-    /* skip "echo" */
+static void cmd_echo(const char *line) { // print everything after "echo " on the command line
+    // skip "echo"
     const char *p = line + 4;
-    /* skip any spaces */
+    // skip any spaces
     while (*p == ' ') p++;
     vga_putchar('\n');
     vga_puts(p);
@@ -1038,55 +887,47 @@ static void cmd_echo(const char *line) {
     vga_putchar('\n');
 }
 
-/*
- * cmd_reboot — triple-fault reboot trick:
- * load an IDT with a zero limit, then trigger a software interrupt.
- * The CPU will triple-fault and reset.
- */
-static void cmd_reboot(void) {
+static void cmd_reboot(void) { // triple-fault reboot
+    // load an IDT with a zero limit, then trigger a software interrupt, cpu triple-faults and resets
     vga_puts("\n  Rebooting...\n");
     uint8_t good = 0x02;
     while (good & 0x02) good = inb(0x64);
-    outb(0x64, 0xFE);          /* pulse the reset line via PS/2 controller */
+    outb(0x64, 0xFE);
     __asm__ volatile ("hlt");
 }
 
-static void cmd_exit(void) {
+static void cmd_exit(void) { // shutdown QEMU emulator
     vga_puts("\n  Shutting down...\n");
 
-    /* QEMU ACPI shutdown — works on QEMU >= 2.0 */
+    // QEMU ACPI shutdown
     outw(0x604, 0x2000);
 
-    /* Fallback 1: try the older Bochs/QEMU debug exit port */
+    // Fallback 1 - try the older QEMU debug exit port
     outw(0xB004, 0x2000);
 
-    /* Fallback 2: triple fault — load a null IDT and trigger an interrupt */
+    // Fallback 2 - triple fault, load a null IDT and trigger an interrupt
     __asm__ volatile (
         "lidt (0)\n"
         "int $3\n"
     );
 
-    /* Should never reach here */
     __asm__ volatile ("hlt");
 }
 
-/*
- * shell_run — read a line from the keyboard, dispatch to a command handler.
- */
-static void shell_run(void) {
+static void shell_run(void) { // read a line from the keyboard, dispatch to a command handler
     while (1) {
         shell_prompt();
         cmd_len = 0;
         history_idx = history_count;
 
-        /* Read characters until Enter */
+        // Read characters until 'Enter'
         while (1) {
             char c = kb_getchar();
 
             if (c == '\n') {
                 vga_putchar('\n');
 
-                /* null-terminating a command before saving in history */
+                // null-terminating a command before saving in history
                 cmd_buf[cmd_len] = '\0';
 
                 if (cmd_len > 0) {
@@ -1100,14 +941,14 @@ static void shell_run(void) {
                     vga_putchar('\b');
                 }
             } else if (c == '\t') {
-                /* --- TAB COMPLETION --- */
+                // Tab command completion
                 if (cmd_len > 0) {
                     const char *commands[] = {"help", "clear", "about", "uptime", "colors", "reboot", "exit", "halt", "echo"};
                     int num_cmds = 9;
                     int match_idx = -1;
                     int matches = 0;
 
-                    /* Searching for all the commands that begin with current input */
+                    // Searching for all the commands that begin with current input
                     for (int i = 0; i < num_cmds; i++) {
                         if (k_strncmp(commands[i], cmd_buf, cmd_len) == 0) {
                             match_idx = i;
@@ -1115,7 +956,7 @@ static void shell_run(void) {
                         }
                     }
 
-                    /* Autocomplete if there is 1 match */
+                    // Autocomplete if there is 1 match
                     if (matches == 1) {
                         const char *match = commands[match_idx];
                         while (cmd_len < (int)k_strlen(match)) {
@@ -1126,7 +967,7 @@ static void shell_run(void) {
                     }
                 }
             } else if (c == '\x11') {
-                /* --- UP ARROW --- */
+                // Up arrow
                 int oldest = (history_count > HISTORY_MAX) ? (history_count - HISTORY_MAX) : 0;
                 if (history_idx > oldest) {
                     while (cmd_len > 0) { vga_putchar('\b'); cmd_len--; }
@@ -1136,7 +977,7 @@ static void shell_run(void) {
                     vga_puts(cmd_buf);
                 }
             } else if (c == '\x12') {
-                /* --- DOWN ARROW --- */
+                // Down arrow
                 if (history_idx < history_count) {
                     while (cmd_len > 0) { vga_putchar('\b'); cmd_len--; }
                     history_idx++;
@@ -1156,9 +997,7 @@ static void shell_run(void) {
         }
         cmd_buf[cmd_len] = '\0';
 
-        /* Dispatch */
         if (cmd_len == 0) {
-            /* empty line — just re-prompt */
         } else if (k_strcmp(cmd_buf, "help") == 0) {
             cmd_help();
         } else if (k_strcmp(cmd_buf, "clear") == 0) {
@@ -1190,9 +1029,7 @@ static void shell_run(void) {
     }
 }
 
-/* =========================================================================
- * 15. KERNEL ENTRY POINT
- * ========================================================================= */
+// KERNEL ENTRY POINT
 
 __attribute__((section(".text.boot"))) void kernel_main(void) {
     pic_remap();
@@ -1203,8 +1040,6 @@ __attribute__((section(".text.boot"))) void kernel_main(void) {
 
     show_boot_menu();
     show_loading_animation();
-    //delay_ticks(18 * 2);        /* show splash for ~2 seconds */
-    //kb_getchar();               /* also wait for a key press */
 
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_clear();
